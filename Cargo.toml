@@ -6,11 +6,13 @@ default-run = "glimpse-rs"
 
 [dependencies]
 anyhow = "1"
+arc-swap = "1"
 argon2 = "0.5"
 axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie-private"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 minijinja = { version = "2", features = ["loader"] }
+notify = "6"
 pulldown-cmark = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

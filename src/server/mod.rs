@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
+
 use axum::{
     Form, Router,
     extract::{Path, Query, State},
@@ -28,7 +30,7 @@ const SESSION_USER_KEY: &str = "username";
 
 #[derive(Clone)]
 pub struct AppState {
-    pub site: Arc<Site>,
+    pub site: Arc<ArcSwap<Site>>,
     pub theme: Arc<Theme>,
     pub media_cache: Arc<MediaCache>,
     pub users: Arc<Users>,
@@ -79,7 +81,8 @@ fn session_cookie(name: &'static str, value: String) -> Cookie<'static> {
 
 async fn index_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
     let viewer = viewer_from_jar(&jar, &state.users);
-    match state.theme.render_index(&state.site, &viewer) {
+    let site = state.site.load_full();
+    match state.theme.render_index(&site, &viewer) {
         Ok(html) => Html(html).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -91,7 +94,8 @@ async fn post_handler(
     Path(slug): Path<String>,
 ) -> Response {
     let viewer = viewer_from_jar(&jar, &state.users);
-    let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == slug) else {
+    let site = state.site.load_full();
+    let Some(post) = visible(&site, &viewer).find(|p| p.slug == slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     match state.theme.render_post(post, &viewer) {
@@ -116,7 +120,8 @@ async fn media_handler(
     }
 
     let viewer = viewer_from_jar(&jar, &state.users);
-    let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == post_slug) else {
+    let site = state.site.load_full();
+    let Some(post) = visible(&site, &viewer).find(|p| p.slug == post_slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -276,7 +281,7 @@ mod tests {
 
     fn test_state(posts: Vec<Post>, cache_dir: PathBuf) -> AppState {
         AppState {
-            site: Arc::new(Site { posts }),
+            site: Arc::new(ArcSwap::from_pointee(Site { posts })),
             theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(crate::users::Users::default()),

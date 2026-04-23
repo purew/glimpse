@@ -4,12 +4,14 @@ mod server;
 mod theme;
 mod users;
 mod viewer;
+mod watcher;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
+use arc_swap::ArcSwap;
 use axum_extra::extract::cookie::Key;
 
 use media::MediaCache;
@@ -27,8 +29,11 @@ async fn main() -> anyhow::Result<()> {
     let users = users::Users::load(Path::new("users.toml")).context("failed to load users")?;
     let cookie_key = key_from_env().context("failed to load session key")?;
 
+    let site = Arc::new(ArcSwap::from_pointee(site));
+    watcher::spawn(posts_dir, Arc::clone(&site));
+
     let state = server::AppState {
-        site: Arc::new(site),
+        site,
         theme: Arc::new(theme),
         media_cache: Arc::new(MediaCache::new(cache_dir)),
         users: Arc::new(users),
