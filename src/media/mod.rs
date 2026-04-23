@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use exif::{In, Reader as ExifReader, Tag};
 use thiserror::Error;
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -125,11 +126,38 @@ impl MediaCache {
 
 // ── Image generation (runs on blocking thread) ────────────────────────────────
 
+fn read_exif_orientation(source: &Path) -> u32 {
+    (|| -> Option<u32> {
+        let file = std::fs::File::open(source).ok()?;
+        let mut buf = std::io::BufReader::new(file);
+        let exif = ExifReader::new().read_from_container(&mut buf).ok()?;
+        exif.get_field(Tag::Orientation, In::PRIMARY)
+            .and_then(|f| f.value.get_uint(0))
+    })()
+    .unwrap_or(1)
+}
+
+fn apply_exif_orientation(img: image::DynamicImage, orientation: u32) -> image::DynamicImage {
+    match orientation {
+        2 => img.fliph(),
+        3 => img.rotate180(),
+        4 => img.flipv(),
+        5 => img.rotate90().fliph(),
+        6 => img.rotate90(),
+        7 => img.rotate270().fliph(),
+        8 => img.rotate270(),
+        _ => img,
+    }
+}
+
 fn generate_derivative(source: &Path, dest: &Path, size: ImageSize) -> Result<(), MediaError> {
     let img = image::open(source).map_err(|e| MediaError::Image {
         path: source.to_owned(),
         source: e,
     })?;
+
+    let orientation = read_exif_orientation(source);
+    let img = apply_exif_orientation(img, orientation);
 
     let resized = if img.width() > size.max_width() {
         img.resize(

@@ -139,13 +139,33 @@ fn photo_url(slug: &str, source_dir: &Path, photo: &Path) -> String {
     format!("/media/{}/{}", slug, rel.display())
 }
 
+/// URL variants for a single photo, used in templates for srcset and lightbox.
+#[derive(Debug, Serialize)]
+struct PhotoCtx {
+    /// Original file URL (used as the `<a href>` for progressive enhancement).
+    url: String,
+    /// `?size=thumb` derivative URL (400 px wide, for srcset).
+    thumb: String,
+    /// `?size=medium` derivative URL (1200 px wide, default display src).
+    medium: String,
+}
+
+impl PhotoCtx {
+    fn new(slug: &str, source_dir: &Path, photo: &Path) -> Self {
+        let url = photo_url(slug, source_dir, photo);
+        let thumb = format!("{url}?size=thumb");
+        let medium = format!("{url}?size=medium");
+        Self { url, thumb, medium }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct PostSummaryCtx {
     slug: String,
     title: String,
     date: String,
     is_draft: bool,
-    cover: Option<String>,
+    cover: Option<PhotoCtx>,
     photo_count: usize,
 }
 
@@ -155,7 +175,7 @@ impl PostSummaryCtx {
         let cover = post
             .cover
             .as_deref()
-            .map(|p| photo_url(&post.slug, &post.source_dir, p));
+            .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p));
         Self {
             slug: post.slug.clone(),
             title: post.title.clone(),
@@ -170,7 +190,7 @@ impl PostSummaryCtx {
 #[derive(Debug, Serialize)]
 struct PhotoGroupCtx {
     name: String,
-    photos: Vec<String>,
+    photos: Vec<PhotoCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -180,7 +200,7 @@ struct PostDetailCtx {
     date: String,
     is_draft: bool,
     body_html: String,
-    cover: Option<String>,
+    cover: Option<PhotoCtx>,
     photo_groups: Vec<PhotoGroupCtx>,
 }
 
@@ -189,7 +209,7 @@ impl PostDetailCtx {
         let cover = post
             .cover
             .as_deref()
-            .map(|p| photo_url(&post.slug, &post.source_dir, p));
+            .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p));
         let photo_groups = post
             .photo_groups
             .iter()
@@ -197,7 +217,7 @@ impl PostDetailCtx {
                 let photos = group
                     .photos
                     .iter()
-                    .map(|p| photo_url(&post.slug, &post.source_dir, p))
+                    .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p))
                     .collect();
                 PhotoGroupCtx {
                     name: group.name.clone(),

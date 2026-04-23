@@ -26,8 +26,12 @@
     {% endif %}
     <div class="gallery">
       {% for photo in group.photos %}
-      <a href="{{ photo }}" class="gallery-item">
-        <img src="{{ photo }}" alt="" loading="lazy">
+      <a href="{{ photo.url }}" class="gallery-item" data-lightbox data-medium="{{ photo.medium }}">
+        <img
+          src="{{ photo.medium }}"
+          srcset="{{ photo.thumb }} 400w, {{ photo.medium }} 1200w"
+          sizes="(max-width: 640px) calc(100vw - 2rem), 380px"
+          alt="" loading="lazy">
       </a>
       {% endfor %}
     </div>

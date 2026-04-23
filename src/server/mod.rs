@@ -8,7 +8,7 @@ use arc_swap::ArcSwap;
 use axum::{
     Form, Router,
     extract::{Path, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -77,13 +77,46 @@ fn session_cookie(name: &'static str, value: String) -> Cookie<'static> {
         .build()
 }
 
+// ── ETag helpers ─────────────────────────────────────────────────────────────
+
+fn html_etag(html: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    html.hash(&mut h);
+    format!("\"{}\"", h.finish())
+}
+
+fn html_response(html: String, request_headers: &HeaderMap) -> Response {
+    let etag = html_etag(&html);
+    // Safe: etag is always a valid ASCII string.
+    let etag_val = HeaderValue::from_str(&etag).expect("etag is valid header value");
+
+    if request_headers.get(header::IF_NONE_MATCH) == Some(&etag_val) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag_val)]).into_response();
+    }
+
+    (
+        [
+            (header::ETAG, etag_val),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        Html(html),
+    )
+        .into_response()
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn index_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
+async fn index_handler(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    request_headers: HeaderMap,
+) -> Response {
     let viewer = viewer_from_jar(&jar, &state.users);
     let site = state.site.load_full();
     match state.theme.render_index(&site, &viewer) {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => html_response(html, &request_headers),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -91,6 +124,7 @@ async fn index_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> 
 async fn post_handler(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    request_headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Response {
     let viewer = viewer_from_jar(&jar, &state.users);
@@ -99,7 +133,7 @@ async fn post_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
     match state.theme.render_post(post, &viewer) {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => html_response(html, &request_headers),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

@@ -12,7 +12,11 @@
 
     {% if post.cover %}
     <a href="/posts/{{ post.slug }}" class="post-card-cover">
-      <img src="{{ post.cover }}" alt="{{ post.title }}" loading="lazy">
+      <img
+        src="{{ post.cover.medium }}"
+        srcset="{{ post.cover.thumb }} 400w, {{ post.cover.medium }} 1200w"
+        sizes="(max-width: 640px) calc(100vw - 2rem), 320px"
+        alt="{{ post.title }}" loading="lazy">
     </a>
     {% else %}
     <a href="/posts/{{ post.slug }}" class="post-card-cover post-card-cover--empty">
