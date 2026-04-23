@@ -1,4 +1,5 @@
 mod content;
+mod media;
 mod server;
 mod theme;
 mod viewer;
@@ -9,10 +10,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
+use media::MediaCache;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let posts_dir = PathBuf::from("posts");
     let theme_dir = PathBuf::from("themes/default");
+    let cache_dir = PathBuf::from("cache");
 
     let site = content::load_site(&posts_dir).context("failed to load site")?;
     println!("Loaded {} post(s)", site.posts.len());
@@ -22,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let state = server::AppState {
         site: Arc::new(site),
         theme: Arc::new(theme),
+        media_cache: Arc::new(MediaCache::new(cache_dir)),
     };
 
     let app = server::router(state, theme_dir.join("static"));

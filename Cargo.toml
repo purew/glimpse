@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 minijinja = { version = "2", features = ["loader"] }
 pulldown-cmark = "0.13"
 serde = { version = "1", features = ["derive"] }

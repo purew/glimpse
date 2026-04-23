@@ -1,20 +1,22 @@
 //! HTTP server: Axum router, request handlers, and static file serving.
 //!
-//! Phase 3: all routes use a public viewer — no authentication yet.
+//! All routes use a public viewer — no authentication yet (Phase 3/4).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
+use serde::Deserialize;
 use tower_http::services::ServeDir;
 
 use crate::content::Site;
+use crate::media::{ImageSize, MediaCache};
 use crate::theme::Theme;
 use crate::viewer::{Viewer, visible};
 
@@ -24,6 +26,7 @@ use crate::viewer::{Viewer, visible};
 pub struct AppState {
     pub site: Arc<Site>,
     pub theme: Arc<Theme>,
+    pub media_cache: Arc<MediaCache>,
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -61,9 +64,15 @@ async fn post_handler(State(state): State<AppState>, Path(slug): Path<String>) -
     }
 }
 
+#[derive(Deserialize)]
+struct MediaParams {
+    size: Option<String>,
+}
+
 async fn media_handler(
     State(state): State<AppState>,
     Path((post_slug, file_path)): Path<(String, String)>,
+    Query(params): Query<MediaParams>,
 ) -> Response {
     if !is_safe_subpath(&file_path) {
         return StatusCode::NOT_FOUND.into_response();
@@ -74,11 +83,41 @@ async fn media_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let file = post.source_dir.join("photos").join(&file_path);
-    let content_type = image_content_type(&file);
+    let source = post.source_dir.join("photos").join(&file_path);
 
-    match tokio::fs::read(&file).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, content_type)], bytes).into_response(),
+    let size = match params.size.as_deref() {
+        Some("thumb") => Some(ImageSize::Thumbnail),
+        Some("medium") => Some(ImageSize::Medium),
+        _ => None,
+    };
+
+    if let Some(size) = size {
+        return match state.media_cache.ensure(&source, size).await {
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Ok(path) => match tokio::fs::read(&path).await {
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                Ok(bytes) => (
+                    [
+                        (header::CONTENT_TYPE, "image/jpeg"),
+                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                    ],
+                    bytes,
+                )
+                    .into_response(),
+            },
+        };
+    }
+
+    let content_type = image_content_type(&source);
+    match tokio::fs::read(&source).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, "public, max-age=3600"),
+            ],
+            bytes,
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -114,7 +153,6 @@ fn image_content_type(path: &std::path::Path) -> &'static str {
 mod tests {
     use super::*;
     use crate::content::{PhotoGroup, Post, Site};
-    use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
     use std::path::Path;
@@ -138,8 +176,7 @@ mod tests {
         }
     }
 
-    fn make_post_with_photo(slug: &str, photo_dir: &Path) -> Post {
-        let source_dir = photo_dir.to_owned();
+    fn make_post_with_photo(slug: &str, source_dir: &Path) -> Post {
         let photos_base = source_dir.join("photos");
         Post {
             slug: slug.into(),
@@ -152,14 +189,22 @@ mod tests {
                 name: String::new(),
                 photos: vec![photos_base.join("img.jpg")],
             }],
-            source_dir,
+            source_dir: source_dir.to_owned(),
         }
     }
 
-    fn test_state(posts: Vec<Post>) -> AppState {
+    fn write_test_image(path: &std::path::Path, width: u32, height: u32) {
+        let img = image::RgbImage::new(width, height);
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(path, image::ImageFormat::Png)
+            .unwrap();
+    }
+
+    fn test_state(posts: Vec<Post>, cache_dir: PathBuf) -> AppState {
         AppState {
             site: Arc::new(Site { posts }),
             theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
+            media_cache: Arc::new(MediaCache::new(cache_dir)),
         }
     }
 
@@ -168,8 +213,8 @@ mod tests {
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
-    fn get(uri: &str) -> Request<Body> {
-        Request::builder().uri(uri).body(Body::empty()).unwrap()
+    fn get(uri: &str) -> Request<axum::body::Body> {
+        Request::builder().uri(uri).body(axum::body::Body::empty()).unwrap()
     }
 
     fn build_router(state: AppState) -> Router {
@@ -180,14 +225,22 @@ mod tests {
 
     #[tokio::test]
     async fn index_returns_200() {
-        let app = build_router(test_state(vec![make_post("p1", vec!["public"])]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("p1", vec!["public"])],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn index_lists_public_post() {
-        let app = build_router(test_state(vec![make_post("hawaii", vec!["public"])]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("hawaii", vec!["public"])],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/")).await.unwrap();
         let html = body_string(resp).await;
         assert!(html.contains("Post hawaii"));
@@ -196,10 +249,14 @@ mod tests {
 
     #[tokio::test]
     async fn index_hides_draft_from_public_viewer() {
-        let app = build_router(test_state(vec![
-            make_post("published", vec!["public"]),
-            make_post("secret-draft", vec![]),
-        ]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![
+                make_post("published", vec!["public"]),
+                make_post("secret-draft", vec![]),
+            ],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/")).await.unwrap();
         let html = body_string(resp).await;
         assert!(html.contains("Post published"));
@@ -210,7 +267,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_returns_200_for_public_post() {
-        let app = build_router(test_state(vec![make_post("hawaii", vec!["public"])]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("hawaii", vec!["public"])],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/posts/hawaii")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let html = body_string(resp).await;
@@ -220,51 +281,59 @@ mod tests {
 
     #[tokio::test]
     async fn post_returns_404_for_unknown_slug() {
-        let app = build_router(test_state(vec![]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
         let resp = app.oneshot(get("/posts/does-not-exist")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn post_returns_404_for_draft() {
-        let app = build_router(test_state(vec![make_post("wip", vec![])]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("wip", vec![])],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/posts/wip")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn post_returns_404_for_group_restricted_post() {
-        let app = build_router(test_state(vec![make_post("family-only", vec!["family"])]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("family-only", vec!["family"])],
+            tmp.path().join("cache"),
+        ));
         let resp = app.oneshot(get("/posts/family-only")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
-    // ── Media ─────────────────────────────────────────────────────────────────
+    // ── Media — original ──────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn media_returns_image_bytes() {
+    async fn media_serves_original_with_short_cache() {
         let tmp = TempDir::new().unwrap();
         let photos_dir = tmp.path().join("photos");
         std::fs::create_dir_all(&photos_dir).unwrap();
-        let img_bytes = b"\xff\xd8\xff\xe0fake-jpeg";
-        std::fs::write(photos_dir.join("img.jpg"), img_bytes).unwrap();
+        write_test_image(&photos_dir.join("img.png"), 10, 10);
 
         let post = make_post_with_photo("trip", tmp.path());
-        let app = build_router(test_state(vec![post]));
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
 
-        let resp = app.oneshot(get("/media/trip/img.jpg")).await.unwrap();
+        let resp = app.oneshot(get("/media/trip/img.png")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
         assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
-            "image/jpeg"
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=3600"
         );
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(&body[..], img_bytes);
     }
 
     #[tokio::test]
     async fn media_returns_404_for_unknown_post() {
-        let app = build_router(test_state(vec![]));
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
         let resp = app.oneshot(get("/media/no-such-post/img.jpg")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -274,9 +343,50 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut post = make_post_with_photo("draft", tmp.path());
         post.access.clear();
-        let app = build_router(test_state(vec![post]));
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
         let resp = app.oneshot(get("/media/draft/img.jpg")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Media — derivatives ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn media_serves_thumbnail_with_immutable_cache() {
+        let tmp = TempDir::new().unwrap();
+        let photos_dir = tmp.path().join("photos");
+        std::fs::create_dir_all(&photos_dir).unwrap();
+        write_test_image(&photos_dir.join("img.png"), 800, 600);
+
+        let post = make_post_with_photo("trip", tmp.path());
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
+
+        let resp = app.oneshot(get("/media/trip/img.png?size=thumb")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/jpeg");
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let img = image::load_from_memory(&bytes).unwrap();
+        assert!(img.width() <= 400);
+    }
+
+    #[tokio::test]
+    async fn media_serves_medium_derivative() {
+        let tmp = TempDir::new().unwrap();
+        let photos_dir = tmp.path().join("photos");
+        std::fs::create_dir_all(&photos_dir).unwrap();
+        write_test_image(&photos_dir.join("img.png"), 2000, 1500);
+
+        let post = make_post_with_photo("trip", tmp.path());
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
+
+        let resp = app.oneshot(get("/media/trip/img.png?size=medium")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let img = image::load_from_memory(&bytes).unwrap();
+        assert!(img.width() <= 1200);
     }
 
     // ── Path safety ───────────────────────────────────────────────────────────
@@ -299,7 +409,7 @@ mod tests {
     async fn media_returns_404_for_path_traversal() {
         let tmp = TempDir::new().unwrap();
         let post = make_post_with_photo("trip", tmp.path());
-        let app = build_router(test_state(vec![post]));
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
         let resp = app
             .oneshot(get("/media/trip/..%2F..%2Fetc%2Fpasswd"))
             .await
