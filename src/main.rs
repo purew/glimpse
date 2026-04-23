@@ -30,12 +30,13 @@ async fn main() -> anyhow::Result<()> {
     let cookie_key = key_from_env().context("failed to load session key")?;
 
     let site = Arc::new(ArcSwap::from_pointee(site));
-    watcher::spawn(posts_dir, Arc::clone(&site));
+    let media_cache = Arc::new(MediaCache::new(cache_dir));
+    watcher::spawn(posts_dir, Arc::clone(&site), Arc::clone(&media_cache));
 
     let state = server::AppState {
         site,
         theme: Arc::new(theme),
-        media_cache: Arc::new(MediaCache::new(cache_dir)),
+        media_cache,
         users: Arc::new(users),
         cookie_key,
     };
