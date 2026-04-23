@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Glimpse{% endblock %}
+
+{% block content %}
+<div class="post-grid">
+  {% for post in posts %}
+  <article class="post-card{% if post.is_draft %} post-card--draft{% endif %}">
+    {% if post.is_draft %}
+    <span class="badge-draft">DRAFT</span>
+    {% endif %}
+
+    {% if post.cover %}
+    <a href="/posts/{{ post.slug }}" class="post-card-cover">
+      <img src="{{ post.cover }}" alt="{{ post.title }}" loading="lazy">
+    </a>
+    {% else %}
+    <a href="/posts/{{ post.slug }}" class="post-card-cover post-card-cover--empty">
+      <span class="photo-count">{{ post.photo_count }} photo{% if post.photo_count != 1 %}s{% endif %}</span>
+    </a>
+    {% endif %}
+
+    <div class="post-card-body">
+      <h2 class="post-card-title">
+        <a href="/posts/{{ post.slug }}">{{ post.title }}</a>
+      </h2>
+      <time class="post-card-date" datetime="{{ post.date }}">{{ post.date }}</time>
+    </div>
+  </article>
+  {% else %}
+  <p class="empty-state">No posts yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

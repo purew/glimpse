@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+minijinja = { version = "2", features = ["loader"] }
 pulldown-cmark = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

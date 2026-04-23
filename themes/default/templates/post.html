@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} — Glimpse{% endblock %}
+
+{% block content %}
+<article class="post">
+  {% if post.is_draft %}
+  <div class="banner-draft">DRAFT — not yet published</div>
+  {% endif %}
+
+  <header class="post-header">
+    <h1>{{ post.title }}</h1>
+    <time class="post-date" datetime="{{ post.date }}">{{ post.date }}</time>
+  </header>
+
+  {% if post.body_html %}
+  <div class="post-body">
+    {{ post.body_html|safe }}
+  </div>
+  {% endif %}
+
+  {% for group in post.photo_groups %}
+  <section class="gallery-section">
+    {% if group.name %}
+    <h2 class="gallery-heading">{{ group.name }}</h2>
+    {% endif %}
+    <div class="gallery">
+      {% for photo in group.photos %}
+      <a href="{{ photo }}" class="gallery-item">
+        <img src="{{ photo }}" alt="" loading="lazy">
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</article>
+{% endblock %}
