@@ -2,6 +2,7 @@ mod content;
 mod media;
 mod server;
 mod theme;
+mod users;
 mod viewer;
 
 use std::net::SocketAddr;
@@ -22,11 +23,14 @@ async fn main() -> anyhow::Result<()> {
     println!("Loaded {} post(s)", site.posts.len());
 
     let theme = theme::Theme::load(&theme_dir);
+    let users = users::Users::load(std::path::Path::new("users.toml"))
+        .context("failed to load users")?;
 
     let state = server::AppState {
         site: Arc::new(site),
         theme: Arc::new(theme),
         media_cache: Arc::new(MediaCache::new(cache_dir)),
+        users: Arc::new(users),
     };
 
     let app = server::router(state, theme_dir.join("static"));

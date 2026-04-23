@@ -80,16 +80,19 @@ impl Theme {
 
     /// Render the login page.
     ///
+    /// `error` is an optional message shown when a previous attempt failed
+    /// (e.g. "Invalid username or password").
+    ///
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_login(&self) -> Result<String, ThemeError> {
+    pub fn render_login(&self, error: Option<&str>) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("login.html")
             .map_err(|e| ThemeError::Load { name: "login.html", source: e })?;
 
-        tmpl.render(context! {})
+        tmpl.render(context! { error })
             .map_err(|e| ThemeError::Render { name: "login.html", source: e })
     }
 }
@@ -306,8 +309,15 @@ mod tests {
     #[test]
     fn render_login_produces_form() {
         let theme = load_theme();
-        let html = theme.render_login().unwrap();
+        let html = theme.render_login(None).unwrap();
         assert!(html.contains("<form"), "login page should have a form element");
+    }
+
+    #[test]
+    fn render_login_with_error_shows_message() {
+        let theme = load_theme();
+        let html = theme.render_login(Some("Invalid username or password")).unwrap();
+        assert!(html.contains("Invalid username or password"));
     }
 
     #[test]

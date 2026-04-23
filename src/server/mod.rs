@@ -1,24 +1,28 @@
-//! HTTP server: Axum router, request handlers, and static file serving.
-//!
-//! All routes use a public viewer — no authentication yet (Phase 3/4).
+//! HTTP server: Axum router, request handlers, sessions, and static file serving.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Form, Router,
     extract::{Path, Query, State},
     http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
 };
 use serde::Deserialize;
 use tower_http::services::ServeDir;
+use tower_sessions::{MemoryStore, Session, SessionManagerLayer};
 
 use crate::content::Site;
 use crate::media::{ImageSize, MediaCache};
 use crate::theme::Theme;
+use crate::users::Users;
 use crate::viewer::{Viewer, visible};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const SESSION_USER_KEY: &str = "username";
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
@@ -27,6 +31,7 @@ pub struct AppState {
     pub site: Arc<Site>,
     pub theme: Arc<Theme>,
     pub media_cache: Arc<MediaCache>,
+    pub users: Arc<Users>,
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -35,26 +40,46 @@ pub struct AppState {
 ///
 /// `static_dir` is the directory served under `/static/` (theme CSS, fonts, etc.).
 pub fn router(state: AppState, static_dir: PathBuf) -> Router {
+    let session_store = MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store);
+
     Router::new()
         .route("/", get(index_handler))
         .route("/posts/{slug}", get(post_handler))
         .route("/media/{post}/{*path}", get(media_handler))
+        .route("/login", get(login_get_handler).post(login_post_handler))
+        .route("/logout", post(logout_handler))
         .nest_service("/static", ServeDir::new(static_dir))
         .with_state(state)
+        .layer(session_layer)
+}
+
+// ── Session helpers ───────────────────────────────────────────────────────────
+
+async fn viewer_from_session(session: &Session, users: &Users) -> Viewer {
+    let username: Option<String> = session.get(SESSION_USER_KEY).await.ok().flatten();
+    match username.as_deref().and_then(|u| users.get(u)) {
+        Some(user) => Viewer::with_groups(user.groups.iter().cloned()),
+        None => Viewer::public(),
+    }
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn index_handler(State(state): State<AppState>) -> Response {
-    let viewer = Viewer::public();
+async fn index_handler(State(state): State<AppState>, session: Session) -> Response {
+    let viewer = viewer_from_session(&session, &state.users).await;
     match state.theme.render_index(&state.site, &viewer) {
         Ok(html) => Html(html).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn post_handler(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
-    let viewer = Viewer::public();
+async fn post_handler(
+    State(state): State<AppState>,
+    session: Session,
+    Path(slug): Path<String>,
+) -> Response {
+    let viewer = viewer_from_session(&session, &state.users).await;
     let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -71,6 +96,7 @@ struct MediaParams {
 
 async fn media_handler(
     State(state): State<AppState>,
+    session: Session,
     Path((post_slug, file_path)): Path<(String, String)>,
     Query(params): Query<MediaParams>,
 ) -> Response {
@@ -78,7 +104,7 @@ async fn media_handler(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let viewer = Viewer::public();
+    let viewer = viewer_from_session(&session, &state.users).await;
     let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == post_slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -120,6 +146,42 @@ async fn media_handler(
             .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+async fn login_get_handler(State(state): State<AppState>) -> Response {
+    match state.theme.render_login(None) {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+}
+
+async fn login_post_handler(
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<LoginForm>,
+) -> Response {
+    if state.users.verify(&form.username, &form.password).is_some() {
+        if session.insert(SESSION_USER_KEY, form.username).await.is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "session error").into_response();
+        }
+        Redirect::to("/").into_response()
+    } else {
+        match state.theme.render_login(Some("Invalid username or password")) {
+            Ok(html) => (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+async fn logout_handler(session: Session) -> Response {
+    let _ = session.flush().await;
+    Redirect::to("/login").into_response()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -205,6 +267,7 @@ mod tests {
             site: Arc::new(Site { posts }),
             theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
+            users: Arc::new(crate::users::Users::default()),
         }
     }
 
@@ -299,7 +362,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_returns_404_for_group_restricted_post() {
+    async fn post_returns_404_for_group_restricted_post_without_session() {
         let tmp = TempDir::new().unwrap();
         let app = build_router(test_state(
             vec![make_post("family-only", vec!["family"])],
@@ -307,6 +370,48 @@ mod tests {
         ));
         let resp = app.oneshot(get("/posts/family-only")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Login ─────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn login_get_returns_form() {
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
+        let resp = app.oneshot(get("/login")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = body_string(resp).await;
+        assert!(html.contains("<form"));
+    }
+
+    #[tokio::test]
+    async fn login_post_bad_credentials_returns_error_page() {
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(axum::body::Body::from("username=alice&password=wrong"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let html = body_string(resp).await;
+        assert!(html.contains("Invalid username or password"));
+    }
+
+    #[tokio::test]
+    async fn logout_redirects_to_login() {
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
+        let req = Request::builder()
+            .method("POST")
+            .uri("/logout")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/login");
     }
 
     // ── Media — original ──────────────────────────────────────────────────────
