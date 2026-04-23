@@ -19,6 +19,12 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tower-http = { version = "0.6", features = ["fs"] }
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"

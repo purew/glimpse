@@ -88,10 +88,14 @@ fn split_frontmatter<'a>(
 ) -> Result<(&'a str, &'a str), ContentError> {
     let rest = content
         .strip_prefix("---\n")
-        .ok_or_else(|| ContentError::MissingFrontmatter { path: path.to_owned() })?;
+        .ok_or_else(|| ContentError::MissingFrontmatter {
+            path: path.to_owned(),
+        })?;
     let end = rest
         .find("\n---\n")
-        .ok_or_else(|| ContentError::MissingFrontmatter { path: path.to_owned() })?;
+        .ok_or_else(|| ContentError::MissingFrontmatter {
+            path: path.to_owned(),
+        })?;
     Ok((&rest[..end], &rest[end + 5..]))
 }
 
@@ -112,7 +116,13 @@ fn slug_from_dir_name(name: &str) -> String {
         let normalized: String = word
             .to_lowercase()
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         for segment in normalized.split('-').filter(|s| !s.is_empty()) {
             parts.push(segment.to_owned());
@@ -132,8 +142,10 @@ fn is_photo(path: &Path) -> bool {
 }
 
 fn collect_photos(dir: &Path) -> Result<Vec<PathBuf>, ContentError> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| ContentError::Io { path: dir.to_owned(), source: e })?;
+    let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
+        path: dir.to_owned(),
+        source: e,
+    })?;
     let mut photos: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -150,7 +162,10 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
     }
 
     let mut entries: Vec<_> = std::fs::read_dir(&photos_dir)
-        .map_err(|e| ContentError::Io { path: photos_dir.clone(), source: e })?
+        .map_err(|e| ContentError::Io {
+            path: photos_dir.clone(),
+            source: e,
+        })?
         .filter_map(|e| e.ok())
         .collect();
     entries.sort_by_key(|e| e.file_name());
@@ -174,7 +189,10 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
     // Flat layout: photos directly under photos/ with no subfolders.
     if groups.is_empty() && !flat_photos.is_empty() {
         flat_photos.sort();
-        groups.push(PhotoGroup { name: String::new(), photos: flat_photos });
+        groups.push(PhotoGroup {
+            name: String::new(),
+            photos: flat_photos,
+        });
     }
 
     Ok(groups)
@@ -182,12 +200,17 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
 
 fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
-    let content = std::fs::read_to_string(&index_path)
-        .map_err(|e| ContentError::Io { path: index_path.clone(), source: e })?;
+    let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
+        path: index_path.clone(),
+        source: e,
+    })?;
 
     let (yaml, body) = split_frontmatter(&content, &index_path)?;
-    let fm: Frontmatter = serde_yaml::from_str(yaml)
-        .map_err(|e| ContentError::InvalidFrontmatter { path: index_path.clone(), source: e })?;
+    let fm: Frontmatter =
+        serde_yaml::from_str(yaml).map_err(|e| ContentError::InvalidFrontmatter {
+            path: index_path.clone(),
+            source: e,
+        })?;
 
     let date = match &fm.date {
         serde_yaml::Value::String(s) => s.clone(),
@@ -226,7 +249,10 @@ fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
 /// Returns [`ContentError`] if any post directory cannot be read or parsed.
 pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
-        .map_err(|e| ContentError::Io { path: posts_dir.to_owned(), source: e })?
+        .map_err(|e| ContentError::Io {
+            path: posts_dir.to_owned(),
+            source: e,
+        })?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
         .collect();
@@ -370,8 +396,14 @@ mod tests {
             "title: Hawaii\ndate: \"2025-03-18\"",
             "",
         );
-        make_photo(&post_dir.join("photos").join("2025-03-18 Travel day"), "a.jpg");
-        make_photo(&post_dir.join("photos").join("2025-03-18 Travel day"), "b.jpg");
+        make_photo(
+            &post_dir.join("photos").join("2025-03-18 Travel day"),
+            "a.jpg",
+        );
+        make_photo(
+            &post_dir.join("photos").join("2025-03-18 Travel day"),
+            "b.jpg",
+        );
         make_photo(&post_dir.join("photos").join("2025-03-19 Hiking"), "c.jpg");
 
         let post = parse_post(&post_dir).unwrap();
@@ -421,8 +453,18 @@ mod tests {
     #[test]
     fn load_site_sorts_posts_by_date() {
         let tmp = TempDir::new().unwrap();
-        make_post(&tmp, "2025-06-01 Later", "title: Later\ndate: \"2025-06-01\"", "");
-        make_post(&tmp, "2025-01-01 Earlier", "title: Earlier\ndate: \"2025-01-01\"", "");
+        make_post(
+            &tmp,
+            "2025-06-01 Later",
+            "title: Later\ndate: \"2025-06-01\"",
+            "",
+        );
+        make_post(
+            &tmp,
+            "2025-01-01 Earlier",
+            "title: Earlier\ndate: \"2025-01-01\"",
+            "",
+        );
 
         let site = load_site(tmp.path()).unwrap();
 

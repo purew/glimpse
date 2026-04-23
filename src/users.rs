@@ -41,8 +41,8 @@ impl Users {
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
             Ok(t) => t,
         };
-        let file: UsersFile = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let file: UsersFile =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         Ok(Self { users: file.users })
     }
 
@@ -52,7 +52,9 @@ impl Users {
     pub fn verify(&self, username: &str, password: &str) -> Option<&User> {
         let user = self.get(username)?;
         let hash = PasswordHash::new(&user.password_hash).ok()?;
-        Argon2::default().verify_password(password.as_bytes(), &hash).ok()?;
+        Argon2::default()
+            .verify_password(password.as_bytes(), &hash)
+            .ok()?;
         Some(user)
     }
 

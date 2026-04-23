@@ -181,7 +181,10 @@ async fn login_post_handler(
         let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
         (updated_jar, Redirect::to("/")).into_response()
     } else {
-        match state.theme.render_login(Some("Invalid username or password")) {
+        match state
+            .theme
+            .render_login(Some("Invalid username or password"))
+        {
             Ok(html) => (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
@@ -287,7 +290,10 @@ mod tests {
     }
 
     fn get(uri: &str) -> Request<axum::body::Body> {
-        Request::builder().uri(uri).body(axum::body::Body::empty()).unwrap()
+        Request::builder()
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap()
     }
 
     fn build_router(state: AppState) -> Router {
@@ -438,7 +444,10 @@ mod tests {
 
         let resp = app.oneshot(get("/media/trip/img.png")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/png");
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
         assert_eq!(
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
             "public, max-age=3600"
@@ -449,7 +458,10 @@ mod tests {
     async fn media_returns_404_for_unknown_post() {
         let tmp = TempDir::new().unwrap();
         let app = build_router(test_state(vec![], tmp.path().join("cache")));
-        let resp = app.oneshot(get("/media/no-such-post/img.jpg")).await.unwrap();
+        let resp = app
+            .oneshot(get("/media/no-such-post/img.jpg"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -475,9 +487,15 @@ mod tests {
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
 
-        let resp = app.oneshot(get("/media/trip/img.png?size=thumb")).await.unwrap();
+        let resp = app
+            .oneshot(get("/media/trip/img.png?size=thumb"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), "image/jpeg");
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/jpeg"
+        );
         assert_eq!(
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
             "public, max-age=31536000, immutable"
@@ -497,7 +515,10 @@ mod tests {
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
 
-        let resp = app.oneshot(get("/media/trip/img.png?size=medium")).await.unwrap();
+        let resp = app
+            .oneshot(get("/media/trip/img.png?size=medium"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let img = image::load_from_memory(&bytes).unwrap();

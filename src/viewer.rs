@@ -10,15 +10,21 @@ pub struct Viewer {
 
 impl Viewer {
     pub fn admin() -> Self {
-        Self { groups: vec!["admin".to_owned()] }
+        Self {
+            groups: vec!["admin".to_owned()],
+        }
     }
 
     pub fn public() -> Self {
-        Self { groups: vec!["public".to_owned()] }
+        Self {
+            groups: vec!["public".to_owned()],
+        }
     }
 
     pub fn with_groups(groups: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self { groups: groups.into_iter().map(Into::into).collect() }
+        Self {
+            groups: groups.into_iter().map(Into::into).collect(),
+        }
     }
 
     pub fn is_admin(&self) -> bool {
@@ -32,7 +38,9 @@ impl Viewer {
         if post.is_draft() {
             return false;
         }
-        post.access.iter().any(|g| g == "public" || self.groups.contains(g))
+        post.access
+            .iter()
+            .any(|g| g == "public" || self.groups.contains(g))
     }
 }
 
@@ -97,7 +105,7 @@ mod tests {
         let site = Site {
             posts: vec![
                 make_post(vec!["family"]),
-                make_post(vec![]),         // draft
+                make_post(vec![]), // draft
                 make_post(vec!["public"]),
             ],
         };

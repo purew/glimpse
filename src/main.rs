@@ -52,16 +52,19 @@ async fn main() -> anyhow::Result<()> {
 fn key_from_env() -> anyhow::Result<Key> {
     let hex = std::env::var("SESSION_SECRET")
         .context("SESSION_SECRET env var not set (generate with: openssl rand -hex 64)")?;
-    let bytes = decode_hex(&hex)
-        .context("SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
+    let bytes =
+        decode_hex(&hex).context("SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
     if bytes.len() != 64 {
-        bail!("SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}", bytes.len());
+        bail!(
+            "SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}",
+            bytes.len()
+        );
     }
     Ok(Key::from(&bytes))
 }
 
 fn decode_hex(s: &str) -> anyhow::Result<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         bail!("odd-length hex string");
     }
     (0..s.len())

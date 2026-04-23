@@ -17,9 +17,17 @@ use crate::viewer::{Viewer, visible};
 #[derive(Debug, Error)]
 pub enum ThemeError {
     #[error("could not load template '{name}'")]
-    Load { name: &'static str, #[source] source: minijinja::Error },
+    Load {
+        name: &'static str,
+        #[source]
+        source: minijinja::Error,
+    },
     #[error("could not render template '{name}'")]
-    Render { name: &'static str, #[source] source: minijinja::Error },
+    Render {
+        name: &'static str,
+        #[source]
+        source: minijinja::Error,
+    },
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -50,13 +58,20 @@ impl Theme {
         let tmpl = self
             .env
             .get_template("index.html")
-            .map_err(|e| ThemeError::Load { name: "index.html", source: e })?;
+            .map_err(|e| ThemeError::Load {
+                name: "index.html",
+                source: e,
+            })?;
 
-        let posts: Vec<PostSummaryCtx> =
-            visible(site, viewer).map(PostSummaryCtx::from_post).collect();
+        let posts: Vec<PostSummaryCtx> = visible(site, viewer)
+            .map(PostSummaryCtx::from_post)
+            .collect();
 
         tmpl.render(context! { posts, is_admin => viewer.is_admin() })
-            .map_err(|e| ThemeError::Render { name: "index.html", source: e })
+            .map_err(|e| ThemeError::Render {
+                name: "index.html",
+                source: e,
+            })
     }
 
     /// Render a single post page.
@@ -71,11 +86,17 @@ impl Theme {
         let tmpl = self
             .env
             .get_template("post.html")
-            .map_err(|e| ThemeError::Load { name: "post.html", source: e })?;
+            .map_err(|e| ThemeError::Load {
+                name: "post.html",
+                source: e,
+            })?;
 
         let ctx = PostDetailCtx::from_post(post);
         tmpl.render(context! { post => ctx, is_admin => viewer.is_admin() })
-            .map_err(|e| ThemeError::Render { name: "post.html", source: e })
+            .map_err(|e| ThemeError::Render {
+                name: "post.html",
+                source: e,
+            })
     }
 
     /// Render the login page.
@@ -90,10 +111,16 @@ impl Theme {
         let tmpl = self
             .env
             .get_template("login.html")
-            .map_err(|e| ThemeError::Load { name: "login.html", source: e })?;
+            .map_err(|e| ThemeError::Load {
+                name: "login.html",
+                source: e,
+            })?;
 
         tmpl.render(context! { error })
-            .map_err(|e| ThemeError::Render { name: "login.html", source: e })
+            .map_err(|e| ThemeError::Render {
+                name: "login.html",
+                source: e,
+            })
     }
 }
 
@@ -125,7 +152,10 @@ struct PostSummaryCtx {
 impl PostSummaryCtx {
     fn from_post(post: &Post) -> Self {
         let photo_count = post.photo_groups.iter().map(|g| g.photos.len()).sum();
-        let cover = post.cover.as_deref().map(|p| photo_url(&post.slug, &post.source_dir, p));
+        let cover = post
+            .cover
+            .as_deref()
+            .map(|p| photo_url(&post.slug, &post.source_dir, p));
         Self {
             slug: post.slug.clone(),
             title: post.title.clone(),
@@ -156,7 +186,10 @@ struct PostDetailCtx {
 
 impl PostDetailCtx {
     fn from_post(post: &Post) -> Self {
-        let cover = post.cover.as_deref().map(|p| photo_url(&post.slug, &post.source_dir, p));
+        let cover = post
+            .cover
+            .as_deref()
+            .map(|p| photo_url(&post.slug, &post.source_dir, p));
         let photo_groups = post
             .photo_groups
             .iter()
@@ -166,7 +199,10 @@ impl PostDetailCtx {
                     .iter()
                     .map(|p| photo_url(&post.slug, &post.source_dir, p))
                     .collect();
-                PhotoGroupCtx { name: group.name.clone(), photos }
+                PhotoGroupCtx {
+                    name: group.name.clone(),
+                    photos,
+                }
             })
             .collect();
 
@@ -231,7 +267,12 @@ mod tests {
     fn render_index_contains_post_title() {
         let theme = load_theme();
         let site = Site {
-            posts: vec![make_post("hawaii", "Hawaii Trip", vec!["family"], "Great time!")],
+            posts: vec![make_post(
+                "hawaii",
+                "Hawaii Trip",
+                vec!["family"],
+                "Great time!",
+            )],
         };
         let viewer = Viewer::with_groups(["family"]);
 
@@ -255,7 +296,10 @@ mod tests {
         let html = theme.render_index(&site, &viewer).unwrap();
 
         assert!(html.contains("Published"));
-        assert!(!html.contains("Secret Draft"), "draft should not appear for non-admin");
+        assert!(
+            !html.contains("Secret Draft"),
+            "draft should not appear for non-admin"
+        );
     }
 
     #[test]
@@ -268,15 +312,25 @@ mod tests {
         let html = theme.render_index(&site, &Viewer::admin()).unwrap();
 
         assert!(html.contains("Secret Draft"), "admin should see draft");
-        assert!(html.to_uppercase().contains("DRAFT"), "admin should see DRAFT badge");
+        assert!(
+            html.to_uppercase().contains("DRAFT"),
+            "admin should see DRAFT badge"
+        );
     }
 
     #[test]
     fn render_post_contains_body_and_title() {
         let theme = load_theme();
-        let post = make_post("hawaii", "Hawaii Trip", vec!["family"], "We arrived safely.");
+        let post = make_post(
+            "hawaii",
+            "Hawaii Trip",
+            vec!["family"],
+            "We arrived safely.",
+        );
 
-        let html = theme.render_post(&post, &Viewer::with_groups(["family"])).unwrap();
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
 
         assert!(html.contains("Hawaii Trip"));
         assert!(html.contains("We arrived safely."));
@@ -289,7 +343,10 @@ mod tests {
 
         let html = theme.render_post(&post, &Viewer::admin()).unwrap();
 
-        assert!(html.to_uppercase().contains("DRAFT"), "draft banner should be visible to admin");
+        assert!(
+            html.to_uppercase().contains("DRAFT"),
+            "draft banner should be visible to admin"
+        );
     }
 
     #[test]
@@ -297,12 +354,17 @@ mod tests {
         let theme = load_theme();
         let post = make_post_with_photos("trip");
 
-        let html = theme.render_post(&post, &Viewer::with_groups(["family"])).unwrap();
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
 
         // MiniJinja HTML-encodes '/' as '&#x2f;' (OWASP recommendation).
         // Decode before asserting so the test checks logical URL content.
         let decoded = html.replace("&#x2f;", "/");
-        assert!(decoded.contains("/media/trip/"), "photo URLs should start with /media/slug/");
+        assert!(
+            decoded.contains("/media/trip/"),
+            "photo URLs should start with /media/slug/"
+        );
         assert!(decoded.contains("a.jpg"));
     }
 
@@ -310,13 +372,18 @@ mod tests {
     fn render_login_produces_form() {
         let theme = load_theme();
         let html = theme.render_login(None).unwrap();
-        assert!(html.contains("<form"), "login page should have a form element");
+        assert!(
+            html.contains("<form"),
+            "login page should have a form element"
+        );
     }
 
     #[test]
     fn render_login_with_error_shows_message() {
         let theme = load_theme();
-        let html = theme.render_login(Some("Invalid username or password")).unwrap();
+        let html = theme
+            .render_login(Some("Invalid username or password"))
+            .unwrap();
         assert!(html.contains("Invalid username or password"));
     }
 
@@ -324,13 +391,19 @@ mod tests {
     fn photo_url_flat_photo() {
         let source = PathBuf::from("/posts/hawaii");
         let photo = source.join("photos").join("img.jpg");
-        assert_eq!(photo_url("hawaii", &source, &photo), "/media/hawaii/img.jpg");
+        assert_eq!(
+            photo_url("hawaii", &source, &photo),
+            "/media/hawaii/img.jpg"
+        );
     }
 
     #[test]
     fn photo_url_subfolder_photo() {
         let source = PathBuf::from("/posts/hawaii");
         let photo = source.join("photos").join("Day 1").join("img.jpg");
-        assert_eq!(photo_url("hawaii", &source, &photo), "/media/hawaii/Day 1/img.jpg");
+        assert_eq!(
+            photo_url("hawaii", &source, &photo),
+            "/media/hawaii/Day 1/img.jpg"
+        );
     }
 }

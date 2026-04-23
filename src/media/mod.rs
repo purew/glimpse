@@ -61,7 +61,9 @@ pub struct MediaCache {
 
 impl MediaCache {
     pub fn new(cache_dir: impl Into<PathBuf>) -> Self {
-        Self { cache_dir: cache_dir.into() }
+        Self {
+            cache_dir: cache_dir.into(),
+        }
     }
 
     /// Returns the path to a derivative of `source` at the requested `size`.
@@ -94,38 +96,57 @@ impl MediaCache {
     /// The filename encodes a hash of the source path and its modification
     /// time, so it changes if the source file is replaced.
     fn derivative_path(&self, source: &Path, size: ImageSize) -> Result<PathBuf, MediaError> {
-        let meta = std::fs::metadata(source)
-            .map_err(|e| MediaError::Io { path: source.to_owned(), source: e })?;
+        let meta = std::fs::metadata(source).map_err(|e| MediaError::Io {
+            path: source.to_owned(),
+            source: e,
+        })?;
         let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
 
         let mut h = DefaultHasher::new();
         source.hash(&mut h);
-        mtime.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+        mtime
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut h);
         size.hash(&mut h);
         let key = h.finish();
 
-        std::fs::create_dir_all(&self.cache_dir)
-            .map_err(|e| MediaError::Io { path: self.cache_dir.clone(), source: e })?;
+        std::fs::create_dir_all(&self.cache_dir).map_err(|e| MediaError::Io {
+            path: self.cache_dir.clone(),
+            source: e,
+        })?;
 
-        Ok(self.cache_dir.join(format!("{:016x}-{}.jpg", key, size.label())))
+        Ok(self
+            .cache_dir
+            .join(format!("{:016x}-{}.jpg", key, size.label())))
     }
 }
 
 // ── Image generation (runs on blocking thread) ────────────────────────────────
 
 fn generate_derivative(source: &Path, dest: &Path, size: ImageSize) -> Result<(), MediaError> {
-    let img = image::open(source)
-        .map_err(|e| MediaError::Image { path: source.to_owned(), source: e })?;
+    let img = image::open(source).map_err(|e| MediaError::Image {
+        path: source.to_owned(),
+        source: e,
+    })?;
 
     let resized = if img.width() > size.max_width() {
-        img.resize(size.max_width(), u32::MAX, image::imageops::FilterType::Lanczos3)
+        img.resize(
+            size.max_width(),
+            u32::MAX,
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         img
     };
 
     resized
         .save_with_format(dest, image::ImageFormat::Jpeg)
-        .map_err(|e| MediaError::Image { path: dest.to_owned(), source: e })?;
+        .map_err(|e| MediaError::Image {
+            path: dest.to_owned(),
+            source: e,
+        })?;
 
     Ok(())
 }
@@ -156,7 +177,11 @@ mod tests {
         assert!(result.exists());
         assert_eq!(result.extension().unwrap(), "jpg");
         let img = image::open(&result).unwrap();
-        assert!(img.width() <= 400, "thumbnail width {} should be ≤ 400", img.width());
+        assert!(
+            img.width() <= 400,
+            "thumbnail width {} should be ≤ 400",
+            img.width()
+        );
     }
 
     #[tokio::test]
@@ -170,7 +195,11 @@ mod tests {
 
         assert!(result.exists());
         let img = image::open(&result).unwrap();
-        assert!(img.width() <= 1200, "medium width {} should be ≤ 1200", img.width());
+        assert!(
+            img.width() <= 1200,
+            "medium width {} should be ≤ 1200",
+            img.width()
+        );
     }
 
     #[tokio::test]
@@ -211,7 +240,9 @@ mod tests {
         write_test_image(&source, 10, 10);
 
         let cache = MediaCache::new(tmp.path().join("cache"));
-        let thumb_path = cache.derivative_path(&source, ImageSize::Thumbnail).unwrap();
+        let thumb_path = cache
+            .derivative_path(&source, ImageSize::Thumbnail)
+            .unwrap();
         let medium_path = cache.derivative_path(&source, ImageSize::Medium).unwrap();
 
         assert_ne!(thumb_path, medium_path);
