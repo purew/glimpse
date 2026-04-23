@@ -6,6 +6,7 @@ use arc_swap::ArcSwap;
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tracing::{error, info};
 
 use crate::content::{self, Site};
 use crate::media::{ImageSize, MediaCache};
@@ -37,21 +38,21 @@ fn run(
     let mut watcher = match notify::recommended_watcher(tx) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("watcher: failed to initialise: {e}");
+            error!(error = %e, "failed to initialise watcher");
             return;
         }
     };
     if let Err(e) = watcher.watch(posts_dir, RecursiveMode::Recursive) {
-        eprintln!("watcher: failed to watch {}: {e}", posts_dir.display());
+        error!(path = %posts_dir.display(), error = %e, "failed to watch path");
         return;
     }
-    println!("Watching {} for changes", posts_dir.display());
+    info!(path = %posts_dir.display(), "watching for changes");
 
     loop {
         match rx.recv() {
             Err(_) => break,
             Ok(Err(e)) => {
-                eprintln!("watcher: {e}");
+                error!(error = %e, "watcher error");
                 continue;
             }
             Ok(Ok(_)) => {}
@@ -63,10 +64,10 @@ fn run(
         match content::load_site(posts_dir) {
             Ok(new_site) => {
                 handle.block_on(preprocess_derivatives(&new_site, media_cache));
-                println!("Reloaded site ({} post(s))", new_site.posts.len());
+                info!(count = new_site.posts.len(), "reloaded site");
                 site.store(Arc::new(new_site));
             }
-            Err(e) => eprintln!("watcher: reload failed: {e}"),
+            Err(e) => error!(error = %e, "reload failed"),
         }
     }
 }
@@ -93,10 +94,10 @@ async fn preprocess_derivatives(site: &Site, media_cache: &Arc<MediaCache>) {
         return;
     }
 
-    println!(
-        "watcher: pre-processing {} derivatives (concurrency {})",
-        work.len(),
-        PREPROCESS_CONCURRENCY
+    info!(
+        count = work.len(),
+        concurrency = PREPROCESS_CONCURRENCY,
+        "pre-processing derivatives"
     );
 
     let sem = Arc::new(Semaphore::new(PREPROCESS_CONCURRENCY));
@@ -108,11 +109,11 @@ async fn preprocess_derivatives(site: &Site, media_cache: &Arc<MediaCache>) {
         set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             if let Err(e) = cache.ensure(&photo, size).await {
-                eprintln!("watcher: pre-process failed for {}: {e}", photo.display());
+                error!(path = %photo.display(), error = %e, "pre-process failed");
             }
         });
     }
 
     while set.join_next().await.is_some() {}
-    println!("watcher: pre-processing complete");
+    info!("pre-processing complete");
 }

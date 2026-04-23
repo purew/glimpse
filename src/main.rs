@@ -13,17 +13,22 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use arc_swap::ArcSwap;
 use axum_extra::extract::cookie::Key;
+use tracing::info;
 
 use media::MediaCache;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let posts_dir = PathBuf::from("posts");
     let theme_dir = PathBuf::from("themes/default");
     let cache_dir = PathBuf::from("cache");
 
     let site = content::load_site(&posts_dir).context("failed to load site")?;
-    println!("Loaded {} post(s)", site.posts.len());
+    info!(count = site.posts.len(), "loaded posts");
 
     let theme = theme::Theme::load(&theme_dir);
     let users = users::Users::load(Path::new("users.toml")).context("failed to load users")?;
@@ -43,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = server::router(state, theme_dir.join("static"));
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("Listening on http://{addr}");
+    info!(%addr, "listening");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
