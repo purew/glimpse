@@ -6,10 +6,11 @@ mod users;
 mod viewer;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
+use axum_extra::extract::cookie::Key;
 
 use media::MediaCache;
 
@@ -23,14 +24,15 @@ async fn main() -> anyhow::Result<()> {
     println!("Loaded {} post(s)", site.posts.len());
 
     let theme = theme::Theme::load(&theme_dir);
-    let users = users::Users::load(std::path::Path::new("users.toml"))
-        .context("failed to load users")?;
+    let users = users::Users::load(Path::new("users.toml")).context("failed to load users")?;
+    let cookie_key = key_from_env().context("failed to load session key")?;
 
     let state = server::AppState {
         site: Arc::new(site),
         theme: Arc::new(theme),
         media_cache: Arc::new(MediaCache::new(cache_dir)),
         users: Arc::new(users),
+        cookie_key,
     };
 
     let app = server::router(state, theme_dir.join("static"));
@@ -41,4 +43,32 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Read `SESSION_SECRET` from the environment and decode it as a 128-char hex
+/// string (64 bytes) to use as the cookie signing key.
+///
+/// Generate a suitable value with: `openssl rand -hex 64`
+fn key_from_env() -> anyhow::Result<Key> {
+    let hex = std::env::var("SESSION_SECRET")
+        .context("SESSION_SECRET env var not set (generate with: openssl rand -hex 64)")?;
+    let bytes = decode_hex(&hex)
+        .context("SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
+    if bytes.len() != 64 {
+        bail!("SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}", bytes.len());
+    }
+    Ok(Key::from(&bytes))
+}
+
+fn decode_hex(s: &str) -> anyhow::Result<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        bail!("odd-length hex string");
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .with_context(|| format!("invalid hex at position {i}"))
+        })
+        .collect()
 }

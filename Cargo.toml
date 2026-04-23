@@ -8,6 +8,7 @@ default-run = "glimpse-rs"
 anyhow = "1"
 argon2 = "0.5"
 axum = "0.8"
+axum-extra = { version = "0.12", features = ["cookie-private"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 minijinja = { version = "2", features = ["loader"] }
 pulldown-cmark = "0.13"
@@ -17,7 +18,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tower-http = { version = "0.6", features = ["fs"] }
-tower-sessions = "0.14"
 
 [dev-dependencies]
 http-body-util = "0.1"

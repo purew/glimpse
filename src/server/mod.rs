@@ -10,9 +10,9 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use serde::Deserialize;
 use tower_http::services::ServeDir;
-use tower_sessions::{MemoryStore, Session, SessionManagerLayer};
 
 use crate::content::Site;
 use crate::media::{ImageSize, MediaCache};
@@ -32,6 +32,13 @@ pub struct AppState {
     pub theme: Arc<Theme>,
     pub media_cache: Arc<MediaCache>,
     pub users: Arc<Users>,
+    pub cookie_key: Key,
+}
+
+impl axum::extract::FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.cookie_key.clone()
+    }
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -40,9 +47,6 @@ pub struct AppState {
 ///
 /// `static_dir` is the directory served under `/static/` (theme CSS, fonts, etc.).
 pub fn router(state: AppState, static_dir: PathBuf) -> Router {
-    let session_store = MemoryStore::default();
-    let session_layer = SessionManagerLayer::new(session_store);
-
     Router::new()
         .route("/", get(index_handler))
         .route("/posts/{slug}", get(post_handler))
@@ -51,23 +55,30 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
         .route("/logout", post(logout_handler))
         .nest_service("/static", ServeDir::new(static_dir))
         .with_state(state)
-        .layer(session_layer)
 }
 
 // ── Session helpers ───────────────────────────────────────────────────────────
 
-async fn viewer_from_session(session: &Session, users: &Users) -> Viewer {
-    let username: Option<String> = session.get(SESSION_USER_KEY).await.ok().flatten();
+fn viewer_from_jar(jar: &PrivateCookieJar, users: &Users) -> Viewer {
+    let username = jar.get(SESSION_USER_KEY).map(|c| c.value().to_owned());
     match username.as_deref().and_then(|u| users.get(u)) {
         Some(user) => Viewer::with_groups(user.groups.iter().cloned()),
         None => Viewer::public(),
     }
 }
 
+fn session_cookie(name: &'static str, value: String) -> Cookie<'static> {
+    Cookie::build((name, value))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .build()
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn index_handler(State(state): State<AppState>, session: Session) -> Response {
-    let viewer = viewer_from_session(&session, &state.users).await;
+async fn index_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
+    let viewer = viewer_from_jar(&jar, &state.users);
     match state.theme.render_index(&state.site, &viewer) {
         Ok(html) => Html(html).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -76,10 +87,10 @@ async fn index_handler(State(state): State<AppState>, session: Session) -> Respo
 
 async fn post_handler(
     State(state): State<AppState>,
-    session: Session,
+    jar: PrivateCookieJar,
     Path(slug): Path<String>,
 ) -> Response {
-    let viewer = viewer_from_session(&session, &state.users).await;
+    let viewer = viewer_from_jar(&jar, &state.users);
     let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -96,7 +107,7 @@ struct MediaParams {
 
 async fn media_handler(
     State(state): State<AppState>,
-    session: Session,
+    jar: PrivateCookieJar,
     Path((post_slug, file_path)): Path<(String, String)>,
     Query(params): Query<MediaParams>,
 ) -> Response {
@@ -104,7 +115,7 @@ async fn media_handler(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let viewer = viewer_from_session(&session, &state.users).await;
+    let viewer = viewer_from_jar(&jar, &state.users);
     let Some(post) = visible(&state.site, &viewer).find(|p| p.slug == post_slug) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -163,14 +174,12 @@ struct LoginForm {
 
 async fn login_post_handler(
     State(state): State<AppState>,
-    session: Session,
+    jar: PrivateCookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
     if state.users.verify(&form.username, &form.password).is_some() {
-        if session.insert(SESSION_USER_KEY, form.username).await.is_err() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "session error").into_response();
-        }
-        Redirect::to("/").into_response()
+        let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
+        (updated_jar, Redirect::to("/")).into_response()
     } else {
         match state.theme.render_login(Some("Invalid username or password")) {
             Ok(html) => (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
@@ -179,9 +188,9 @@ async fn login_post_handler(
     }
 }
 
-async fn logout_handler(session: Session) -> Response {
-    let _ = session.flush().await;
-    Redirect::to("/login").into_response()
+async fn logout_handler(jar: PrivateCookieJar) -> Response {
+    let updated_jar = jar.remove(Cookie::from(SESSION_USER_KEY));
+    (updated_jar, Redirect::to("/login")).into_response()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -268,6 +277,7 @@ mod tests {
             theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(crate::users::Users::default()),
+            cookie_key: Key::generate(),
         }
     }
 
