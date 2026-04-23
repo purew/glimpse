@@ -8,10 +8,13 @@ default-run = "glimpse-rs"
 anyhow = "1"
 arc-swap = "1"
 argon2 = "0.5"
+atom_syndication = "0.12"
 axum = "0.8"
 axum-extra = { version = "0.12", features = ["cookie-private"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 kamadak-exif = "0.6"
+sha2 = "0.10"
 minijinja = { version = "2", features = ["loader"] }
 notify = "6"
 pulldown-cmark = "0.13"

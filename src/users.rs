@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use serde::Deserialize;
+use sha2::Digest;
 
 /// A single user entry as stored in `users.toml`.
 #[derive(Debug, Deserialize)]
@@ -12,6 +13,18 @@ pub struct User {
     pub username: String,
     password_hash: String,
     pub groups: Vec<String>,
+    /// SHA-256 (hex) of the raw feed token. See `generate-feed-token` binary.
+    #[serde(default)]
+    pub feed_token_hash: Option<String>,
+}
+
+/// Return the SHA-256 hex digest of `token`.
+///
+/// Used both here (for lookup) and in the `generate-feed-token` binary (for
+/// producing the hash to store in `users.toml`).
+pub fn hash_feed_token(token: &str) -> String {
+    let hash = sha2::Sha256::digest(token.as_bytes());
+    hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -61,6 +74,17 @@ impl Users {
     /// Find a user by username; `None` if not found.
     pub fn get(&self, username: &str) -> Option<&User> {
         self.users.iter().find(|u| u.username == username)
+    }
+
+    /// Look up a user by their raw feed token; `None` if the token is not valid.
+    ///
+    /// The token is hashed before comparison so the in-memory store never holds
+    /// a live token.
+    pub fn lookup_by_feed_token(&self, token: &str) -> Option<&User> {
+        let token_hash = hash_feed_token(token);
+        self.users
+            .iter()
+            .find(|u| u.feed_token_hash.as_deref() == Some(token_hash.as_str()))
     }
 }
 
@@ -140,5 +164,38 @@ mod tests {
         write!(f, "").unwrap();
         let users = Users::load(f.path()).unwrap();
         assert!(users.get("ghost").is_none());
+    }
+
+    fn toml_with_feed_token(username: &str, token: &str) -> NamedTempFile {
+        let token_hash = hash_feed_token(token);
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            "[[users]]\nusername = \"{username}\"\npassword_hash = \"\"\ngroups = []\nfeed_token_hash = \"{token_hash}\"\n",
+        )
+        .unwrap();
+        f
+    }
+
+    #[test]
+    fn lookup_by_feed_token_finds_user() {
+        let file = toml_with_feed_token("alice", "abc123");
+        let users = Users::load(file.path()).unwrap();
+        let user = users.lookup_by_feed_token("abc123").unwrap();
+        assert_eq!(user.username, "alice");
+    }
+
+    #[test]
+    fn lookup_by_feed_token_wrong_token_returns_none() {
+        let file = toml_with_feed_token("alice", "abc123");
+        let users = Users::load(file.path()).unwrap();
+        assert!(users.lookup_by_feed_token("wrongtoken").is_none());
+    }
+
+    #[test]
+    fn lookup_by_feed_token_no_token_set_returns_none() {
+        let file = toml_with_user("alice", "pw", &[]);
+        let users = Users::load(file.path()).unwrap();
+        assert!(users.lookup_by_feed_token("anything").is_none());
     }
 }

@@ -76,10 +76,58 @@ cover: "photos/.../x.jpg" # optional hero image
 
 Omitting `access` (or leaving it empty) makes a post a **draft** — visible only to `admin`. Adding at least one group publishes it.
 
+## Atom feeds
+
+Each user can have a private Atom feed personalised to their access groups. Feeds use a per-user token in the URL instead of a session cookie, so any feed reader that fetches plain HTTPS works without extra configuration.
+
+### Setting up a feed for a user
+
+**1. Generate a token:**
+
+```
+cargo run --bin generate-feed-token
+```
+
+Output:
+```
+Token (use in feed URL):   3f8a1c0e...
+Hash  (add to users.toml): d4e2f9b7...
+```
+
+**2. Add the hash to `users.toml`:**
+
+```toml
+[[users]]
+username = "alice"
+password_hash = "..."
+groups = ["family"]
+feed_token_hash = "d4e2f9b7..."
+```
+
+Restart the server (or wait for hot reload). The feed is now live at:
+
+```
+https://yoursite.com/feed/3f8a1c0e....xml
+```
+
+Share this URL with the user. The feed contains only posts their groups can see.
+
+### Revoking a feed token
+
+Replace `feed_token_hash` with a new value from `generate-feed-token` (or delete the field to disable the feed entirely) and restart.
+
+### Security notes
+
+- Only the SHA-256 hash of the token is stored — a leaked `users.toml` does not expose live feed URLs.
+- Image URLs inside the feed are signed with the token (`?t=<token>`), so feed readers can load photos without a session cookie.
+- The feed endpoint returns 404 for unknown tokens — it does not confirm that the endpoint exists.
+- Feed responses carry `Cache-Control: private, no-store`.
+
 ## Tooling
 
 | Command | Purpose |
 |---------|---------|
 | `cargo run` | Start the server |
 | `cargo run --bin hash-password -- <pw>` | Generate an argon2 hash for users.toml |
+| `cargo run --bin generate-feed-token` | Mint a new Atom feed token for a user |
 | `cargo test` | Run the test suite |

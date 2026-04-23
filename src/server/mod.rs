@@ -53,6 +53,7 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
         .route("/", get(index_handler))
         .route("/posts/{slug}", get(post_handler))
         .route("/media/{post}/{*path}", get(media_handler))
+        .route("/feed/{token}", get(feed_handler))
         .route("/login", get(login_get_handler).post(login_post_handler))
         .route("/logout", post(logout_handler))
         .nest_service("/static", ServeDir::new(static_dir))
@@ -138,9 +139,57 @@ async fn post_handler(
     }
 }
 
+async fn feed_handler(
+    State(state): State<AppState>,
+    Path(token_filename): Path<String>,
+    request_headers: HeaderMap,
+) -> Response {
+    // Strip the ".xml" extension from the path segment.
+    let token = token_filename
+        .strip_suffix(".xml")
+        .unwrap_or(&token_filename);
+
+    let Some(user) = state.users.lookup_by_feed_token(token) else {
+        // Return 404, not 401, to avoid confirming the endpoint exists.
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let viewer = crate::viewer::Viewer::with_groups(user.groups.iter().cloned());
+    let site = state.site.load_full();
+    let base_url = derive_base_url(&request_headers);
+    let xml = crate::theme::render_feed(&site, &viewer, &base_url, token);
+
+    (
+        [
+            (header::CONTENT_TYPE, "application/atom+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "private, no-store"),
+        ],
+        xml,
+    )
+        .into_response()
+}
+
+/// Build a base URL from the incoming `Host` header.
+///
+/// Falls back to `http://localhost` if the header is absent or malformed.
+fn derive_base_url(headers: &HeaderMap) -> String {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = if host.starts_with("localhost") || host.starts_with("127.") {
+        "http"
+    } else {
+        "https"
+    };
+    format!("{scheme}://{host}")
+}
+
 #[derive(Deserialize)]
 struct MediaParams {
     size: Option<String>,
+    /// Feed token for unauthenticated media access from feed readers.
+    t: Option<String>,
 }
 
 async fn media_handler(
@@ -153,7 +202,16 @@ async fn media_handler(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let viewer = viewer_from_jar(&jar, &state.users);
+    // Accept either a valid session cookie or a valid feed token.
+    let viewer = if let Some(token) = &params.t {
+        match state.users.lookup_by_feed_token(token) {
+            Some(user) => crate::viewer::Viewer::with_groups(user.groups.iter().cloned()),
+            None => return StatusCode::NOT_FOUND.into_response(),
+        }
+    } else {
+        viewer_from_jar(&jar, &state.users)
+    };
+
     let site = state.site.load_full();
     let Some(post) = visible(&site, &viewer).find(|p| p.slug == post_slug) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -321,6 +379,33 @@ mod tests {
             users: Arc::new(crate::users::Users::default()),
             cookie_key: Key::generate(),
         }
+    }
+
+    fn test_state_with_users(
+        posts: Vec<Post>,
+        cache_dir: PathBuf,
+        users: crate::users::Users,
+    ) -> AppState {
+        AppState {
+            site: Arc::new(ArcSwap::from_pointee(Site { posts })),
+            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
+            media_cache: Arc::new(MediaCache::new(cache_dir)),
+            users: Arc::new(users),
+            cookie_key: Key::generate(),
+        }
+    }
+
+    fn users_with_feed_token(token: &str) -> crate::users::Users {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+        let token_hash = crate::users::hash_feed_token(token);
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            "[[users]]\nusername = \"alice\"\npassword_hash = \"\"\ngroups = [\"family\"]\nfeed_token_hash = \"{token_hash}\"\n"
+        )
+        .unwrap();
+        crate::users::Users::load(f.path()).unwrap()
     }
 
     async fn body_string(response: axum::response::Response) -> String {
@@ -587,6 +672,120 @@ mod tests {
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
         let resp = app
             .oneshot(get("/media/trip/..%2F..%2Fetc%2Fpasswd"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Feed ──────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn feed_returns_404_for_unknown_token() {
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(vec![], tmp.path().join("cache")));
+        let resp = app.oneshot(get("/feed/nosuchtoken.xml")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn feed_returns_atom_for_valid_token() {
+        let tmp = TempDir::new().unwrap();
+        let users = users_with_feed_token("mytoken");
+        let post = make_post("hawaii", vec!["family"]);
+        let app = build_router(test_state_with_users(
+            vec![post],
+            tmp.path().join("cache"),
+            users,
+        ));
+        let resp = app.oneshot(get("/feed/mytoken.xml")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/atom+xml; charset=utf-8"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "private, no-store"
+        );
+        let body = body_string(resp).await;
+        assert!(
+            body.contains("Post hawaii"),
+            "feed should contain post title"
+        );
+    }
+
+    #[tokio::test]
+    async fn feed_excludes_posts_inaccessible_to_token_user() {
+        let tmp = TempDir::new().unwrap();
+        let users = users_with_feed_token("tok");
+        let posts = vec![
+            make_post("visible", vec!["family"]),
+            make_post("restricted", vec!["friends"]),
+        ];
+        let app = build_router(test_state_with_users(
+            posts,
+            tmp.path().join("cache"),
+            users,
+        ));
+        let resp = app.oneshot(get("/feed/tok.xml")).await.unwrap();
+        let body = body_string(resp).await;
+        assert!(body.contains("Post visible"));
+        assert!(!body.contains("Post restricted"));
+    }
+
+    // ── Media — feed token auth ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn media_serves_image_with_valid_feed_token() {
+        let tmp = TempDir::new().unwrap();
+        let photos_dir = tmp.path().join("photos");
+        std::fs::create_dir_all(&photos_dir).unwrap();
+        write_test_image(&photos_dir.join("img.png"), 10, 10);
+
+        let users = users_with_feed_token("feedtok");
+        let post = Post {
+            slug: "trip".into(),
+            title: "Trip".into(),
+            date: "2025-01-01".into(),
+            access: vec!["family".into()],
+            cover: None,
+            body_html: String::new(),
+            photo_groups: vec![],
+            source_dir: tmp.path().to_owned(),
+        };
+        let app = build_router(test_state_with_users(
+            vec![post],
+            tmp.path().join("cache"),
+            users,
+        ));
+
+        let resp = app
+            .oneshot(get("/media/trip/img.png?t=feedtok"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn media_returns_404_for_invalid_feed_token() {
+        let tmp = TempDir::new().unwrap();
+        let photos_dir = tmp.path().join("photos");
+        std::fs::create_dir_all(&photos_dir).unwrap();
+        write_test_image(&photos_dir.join("img.png"), 10, 10);
+
+        let post = make_post_with_photo("trip", tmp.path());
+        let app = build_router(test_state(vec![post], tmp.path().join("cache")));
+
+        let resp = app
+            .oneshot(get("/media/trip/img.png?t=badtoken"))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

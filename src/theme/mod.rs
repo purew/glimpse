@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use atom_syndication::{Content, Entry, Feed, Link, Text};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime};
 use minijinja::{Environment, context, path_loader};
 use serde::Serialize;
 use thiserror::Error;
@@ -122,6 +124,112 @@ impl Theme {
                 source: e,
             })
     }
+}
+
+// ── Feed rendering ────────────────────────────────────────────────────────────
+
+/// Render a personalised Atom feed for `viewer`.
+///
+/// `base_url` must be the scheme+host with no trailing slash
+/// (e.g. `"https://example.com"`). It is embedded in every absolute URL inside
+/// the feed so that feed readers can load images without a session cookie.
+///
+/// `token` is the raw (unhashed) feed token for this viewer; it is appended
+/// as `?t=<token>` to every image URL so the media route can authenticate the
+/// request without a cookie.
+pub fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str) -> String {
+    let entries: Vec<Entry> = visible(site, viewer)
+        .map(|post| feed_entry(post, base_url, token))
+        .collect();
+
+    let updated = entries
+        .first()
+        .map(|e| e.updated)
+        .unwrap_or_else(fallback_date);
+
+    let feed = Feed {
+        title: Text::plain("Glimpse"),
+        id: format!("{base_url}/"),
+        updated,
+        links: vec![
+            Link {
+                href: format!("{base_url}/"),
+                rel: "alternate".into(),
+                ..Default::default()
+            },
+            Link {
+                href: format!("{base_url}/feed/{token}.xml"),
+                rel: "self".into(),
+                ..Default::default()
+            },
+        ],
+        entries,
+        ..Default::default()
+    };
+
+    feed.to_string()
+}
+
+fn feed_entry(post: &Post, base_url: &str, token: &str) -> Entry {
+    let post_url = format!("{base_url}/posts/{}", post.slug);
+    let updated = parse_post_date(&post.date);
+    let content_html = entry_content_html(post, base_url, token);
+
+    Entry {
+        title: Text::plain(post.title.as_str()),
+        id: post_url.clone(),
+        updated,
+        links: vec![Link {
+            href: post_url,
+            rel: "alternate".into(),
+            ..Default::default()
+        }],
+        content: Some(Content {
+            content_type: Some("html".into()),
+            value: Some(content_html),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn entry_content_html(post: &Post, base_url: &str, token: &str) -> String {
+    let mut html = String::new();
+
+    if !post.body_html.is_empty() {
+        html.push_str(&post.body_html);
+    }
+
+    for group in &post.photo_groups {
+        if !group.name.is_empty() {
+            html.push_str(&format!("<h2>{}</h2>\n", group.name));
+        }
+        for photo in &group.photos {
+            let photos_dir = post.source_dir.join("photos");
+            let rel = photo.strip_prefix(&photos_dir).unwrap_or(photo);
+            let url = format!("{base_url}/media/{}/{}", post.slug, rel.display());
+            html.push_str(&format!(
+                "<img src=\"{url}?size=medium&amp;t={token}\" style=\"max-width:100%;display:block\">\n"
+            ));
+        }
+    }
+
+    html
+}
+
+fn parse_post_date(date_str: &str) -> DateTime<FixedOffset> {
+    let naive = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+        .unwrap_or_else(|_| NaiveDate::from_ymd_opt(2000, 1, 1).expect("valid fallback date"))
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"));
+    naive.and_utc().fixed_offset()
+}
+
+fn fallback_date() -> DateTime<FixedOffset> {
+    NaiveDate::from_ymd_opt(2000, 1, 1)
+        .expect("valid fallback date")
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"))
+        .and_utc()
+        .fixed_offset()
 }
 
 // ── View models ───────────────────────────────────────────────────────────────
@@ -425,5 +533,73 @@ mod tests {
             photo_url("hawaii", &source, &photo),
             "/media/hawaii/Day 1/img.jpg"
         );
+    }
+
+    #[test]
+    fn render_feed_contains_post_title_and_link() {
+        let site = Site {
+            posts: vec![make_post(
+                "hawaii",
+                "Hawaii Trip",
+                vec!["family"],
+                "Great time!",
+            )],
+        };
+        let viewer = Viewer::with_groups(["family"]);
+
+        let xml = render_feed(&site, &viewer, "https://example.com", "mytoken");
+
+        assert!(
+            xml.contains("Hawaii Trip"),
+            "feed should contain post title"
+        );
+        assert!(
+            xml.contains("https://example.com/posts/hawaii"),
+            "feed should link to post"
+        );
+    }
+
+    #[test]
+    fn render_feed_excludes_inaccessible_posts() {
+        let site = Site {
+            posts: vec![
+                make_post("visible", "Visible", vec!["family"], ""),
+                make_post("draft", "Draft Post", vec![], ""),
+            ],
+        };
+        let viewer = Viewer::with_groups(["family"]);
+
+        let xml = render_feed(&site, &viewer, "https://example.com", "tok");
+
+        assert!(xml.contains("Visible"));
+        assert!(
+            !xml.contains("Draft Post"),
+            "draft should not appear in feed"
+        );
+    }
+
+    #[test]
+    fn render_feed_image_urls_include_token() {
+        let post = make_post_with_photos("trip");
+        let site = Site { posts: vec![post] };
+        let viewer = Viewer::with_groups(["family"]);
+
+        let xml = render_feed(&site, &viewer, "https://example.com", "tok123");
+
+        assert!(
+            xml.contains("t=tok123"),
+            "image URLs should carry the feed token"
+        );
+        assert!(
+            xml.contains("https://example.com/media/trip/"),
+            "image URLs should be absolute"
+        );
+    }
+
+    #[test]
+    fn render_feed_self_link_contains_token() {
+        let site = Site { posts: vec![] };
+        let xml = render_feed(&site, &Viewer::public(), "https://example.com", "mytoken");
+        assert!(xml.contains("mytoken.xml"), "self link should embed token");
     }
 }
