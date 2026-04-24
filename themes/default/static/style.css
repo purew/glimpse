@@ -281,6 +281,19 @@ main {
   transform: scale(1.03);
 }
 
+.gallery-item--video {
+  grid-column: 1 / -1;
+  aspect-ratio: unset;
+  overflow: visible;
+  background: none;
+}
+
+.gallery-item--video video {
+  width: 100%;
+  display: block;
+  border-radius: 4px;
+}
+
 /* ── Login page ───────────────────────────────────────────────────────────── */
 
 .login-form {
