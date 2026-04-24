@@ -24,7 +24,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let posts_dir = PathBuf::from("posts");
-    let theme_dir = PathBuf::from("themes/default");
+    let theme_dir = std::env::var("GLIMPSE_THEME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("themes/default"));
     let cache_dir = PathBuf::from("cache");
 
     let site = content::load_site(&posts_dir).context("failed to load site")?;
@@ -36,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
 
     let site = Arc::new(ArcSwap::from_pointee(site));
     let media_cache = Arc::new(MediaCache::new(cache_dir));
-    watcher::spawn(posts_dir, Arc::clone(&site), Arc::clone(&media_cache));
+    watcher::spawn(posts_dir.clone(), Arc::clone(&site), Arc::clone(&media_cache));
 
     let state = server::AppState {
         site,
@@ -44,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         media_cache,
         users: Arc::new(users),
         cookie_key,
+        posts_dir,
     };
 
     let app = server::router(state, theme_dir.join("static"));
