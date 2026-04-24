@@ -56,18 +56,18 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read `SESSION_SECRET` from the environment and decode it as a 128-char hex
+/// Read `GLIMPSE_SESSION_SECRET` from the environment and decode it as a 128-char hex
 /// string (64 bytes) to use as the cookie signing key.
 ///
 /// Generate a suitable value with: `openssl rand -hex 64`
 fn key_from_env() -> anyhow::Result<Key> {
-    let hex = std::env::var("SESSION_SECRET")
-        .context("SESSION_SECRET env var not set (generate with: openssl rand -hex 64)")?;
-    let bytes =
-        decode_hex(&hex).context("SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
+    let hex = std::env::var("GLIMPSE_SESSION_SECRET")
+        .context("GLIMPSE_SESSION_SECRET env var not set (generate with: openssl rand -hex 64)")?;
+    let bytes = decode_hex(&hex)
+        .context("GLIMPSE_SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
     if bytes.len() != 64 {
         bail!(
-            "SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}",
+            "GLIMPSE_SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}",
             bytes.len()
         );
     }

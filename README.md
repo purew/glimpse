@@ -4,11 +4,12 @@ A private family blog service. Posts are photo-centred with per-post access cont
 
 ## Running
 
-```
+```bash
+export GLIMPSE_SESSION_SECRET=$(openssl rand -hex 64)
 cargo run
 ```
 
-Serves on `http://127.0.0.1:3000` by default. Requires `posts/`, `themes/default/`, and `users.toml` to be present.
+Serves on `http://127.0.0.1:3000`. Requires `posts/` and `themes/default/` to be present. `users.toml` is optional — if absent the server starts with no registered users.
 
 ## users.toml
 
