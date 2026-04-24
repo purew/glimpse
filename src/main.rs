@@ -1,3 +1,4 @@
+mod config;
 mod content;
 mod media;
 mod server;
@@ -23,13 +24,15 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let cfg = Arc::new(config::Config::load(Path::new("glimpse.toml")).context("failed to load config")?);
+
     let posts_dir = PathBuf::from("posts");
     let theme_dir = std::env::var("GLIMPSE_THEME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("themes/default"));
     let cache_dir = PathBuf::from("cache");
 
-    let site = content::load_site(&posts_dir).context("failed to load site")?;
+    let site = content::load_site(&posts_dir, &cfg).context("failed to load site")?;
     info!(count = site.posts.len(), "loaded posts");
 
     let theme = theme::Theme::load(&theme_dir);
@@ -38,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     let site = Arc::new(ArcSwap::from_pointee(site));
     let media_cache = Arc::new(MediaCache::new(cache_dir));
-    watcher::spawn(posts_dir.clone(), Arc::clone(&site), Arc::clone(&media_cache));
+    watcher::spawn(posts_dir.clone(), Arc::clone(&site), Arc::clone(&media_cache), Arc::clone(&cfg));
 
     let state = server::AppState {
         site,
@@ -47,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         users: Arc::new(users),
         cookie_key,
         posts_dir,
+        cfg,
     };
 
     let app = server::router(state, theme_dir.join("static"));

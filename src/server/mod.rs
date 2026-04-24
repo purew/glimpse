@@ -16,7 +16,8 @@ use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use serde::Deserialize;
 use tower_http::services::ServeDir;
 
-use crate::content::Site;
+use crate::config::Config;
+use crate::content::{self, Site};
 use crate::media::{ImageSize, MediaCache};
 use crate::theme::Theme;
 use crate::users::Users;
@@ -35,6 +36,8 @@ pub struct AppState {
     pub media_cache: Arc<MediaCache>,
     pub users: Arc<Users>,
     pub cookie_key: Key,
+    pub posts_dir: std::path::PathBuf,
+    pub cfg: Arc<Config>,
 }
 
 impl axum::extract::FromRef<AppState> for Key {
@@ -398,6 +401,8 @@ mod tests {
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(crate::users::Users::default()),
             cookie_key: Key::generate(),
+            posts_dir: PathBuf::from("posts"),
+            cfg: Arc::new(crate::config::Config::default()),
         }
     }
 
@@ -412,6 +417,8 @@ mod tests {
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(users),
             cookie_key: Key::generate(),
+            posts_dir: PathBuf::from("posts"),
+            cfg: Arc::new(crate::config::Config::default()),
         }
     }
 

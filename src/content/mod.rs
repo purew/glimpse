@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use pulldown_cmark::{Options, Parser, html};
 use serde::Deserialize;
 use thiserror::Error;
+use tracing::warn;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -158,7 +159,61 @@ fn is_video(path: &Path) -> bool {
     )
 }
 
-fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
+/// Query the height in pixels of the first video stream via `ffprobe`.
+///
+/// Returns `None` when ffprobe is not installed or fails to read the file.
+fn video_height(path: &Path) -> Option<u32> {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=height",
+            "-of",
+            "csv=s=x:p=0",
+        ])
+        .arg(path)
+        .output()
+        .ok()?;
+    std::str::from_utf8(&output.stdout)
+        .ok()?
+        .trim()
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Returns `true` if the video should be included (height ≤ `max_height`).
+///
+/// Videos above the limit are skipped and a warning is logged. If ffprobe is
+/// unavailable the file is included with a warning.
+fn video_within_max_height(path: &Path, max_height: u32) -> bool {
+    match video_height(path) {
+        Some(h) if h > max_height => {
+            warn!(
+                path = %path.display(),
+                height = h,
+                max_height,
+                "skipping video exceeding max height"
+            );
+            false
+        }
+        Some(_) => true,
+        None => {
+            warn!(
+                path = %path.display(),
+                "could not determine video resolution via ffprobe; including anyway"
+            );
+            true
+        }
+    }
+}
+
+fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
         source: e,
@@ -166,7 +221,7 @@ fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     let mut items: Vec<MediaItem> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| is_photo(p) || is_video(p))
+        .filter(|p| is_photo(p) || (is_video(p) && video_within_max_height(p, max_video_height)))
         .map(|p| {
             let is_video = is_video(&p);
             MediaItem { path: p, is_video }
@@ -176,15 +231,13 @@ fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     Ok(items)
 }
 
-fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
-    let photos_dir = post_dir.join("photos");
-    if !photos_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&photos_dir)
+fn discover_photo_groups(
+    post_dir: &Path,
+    max_video_height: u32,
+) -> Result<Vec<PhotoGroup>, ContentError> {
+    let mut entries: Vec<_> = std::fs::read_dir(post_dir)
         .map_err(|e| ContentError::Io {
-            path: photos_dir.clone(),
+            path: post_dir.to_owned(),
             source: e,
         })?
         .filter_map(|e| e.ok())
@@ -198,20 +251,19 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let media = collect_media(&path)?;
+            let media = collect_media(&path, max_video_height)?;
             if !media.is_empty() {
                 groups.push(PhotoGroup { name, media });
             }
-        } else if is_photo(&path) || is_video(&path) {
+        } else if is_photo(&path) || (is_video(&path) && video_within_max_height(&path, max_video_height)) {
             let is_video = is_video(&path);
             flat_media.push(MediaItem { path, is_video });
         }
     }
 
-    // Flat layout: media directly under photos/ with no subfolders.
-    if groups.is_empty() && !flat_media.is_empty() {
+    if !flat_media.is_empty() {
         flat_media.sort_by(|a, b| a.path.cmp(&b.path));
-        groups.push(PhotoGroup {
+        groups.insert(0, PhotoGroup {
             name: String::new(),
             media: flat_media,
         });
@@ -220,7 +272,7 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
     Ok(groups)
 }
 
-pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
+pub fn parse_post(post_dir: &Path, cfg: &crate::config::Config) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
     let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
         path: index_path.clone(),
@@ -246,7 +298,7 @@ pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
     let slug = slug_from_dir_name(&dir_name);
     let body_html = render_markdown(body);
     let cover = fm.cover.map(|c| post_dir.join(c));
-    let photo_groups = discover_photo_groups(post_dir)?;
+    let photo_groups = discover_photo_groups(post_dir, cfg.video_max_height)?;
 
     Ok(Post {
         slug,
@@ -269,7 +321,7 @@ pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
 /// # Errors
 ///
 /// Returns [`ContentError`] if any post directory cannot be read or parsed.
-pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
+pub fn load_site(posts_dir: &Path, cfg: &crate::config::Config) -> Result<Site, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
         .map_err(|e| ContentError::Io {
             path: posts_dir.to_owned(),
@@ -282,7 +334,7 @@ pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
 
     let mut posts = Vec::with_capacity(entries.len());
     for entry in entries {
-        posts.push(parse_post(&entry.path())?);
+        posts.push(parse_post(&entry.path(), cfg)?);
     }
     posts.sort_by(|a, b| a.date.cmp(&b.date));
 
@@ -372,6 +424,10 @@ mod tests {
 
     // ── Integration tests ─────────────────────────────────────────────────────
 
+    fn default_cfg() -> crate::config::Config {
+        crate::config::Config::default()
+    }
+
     #[test]
     fn parse_post_published() {
         let tmp = TempDir::new().unwrap();
@@ -382,7 +438,7 @@ mod tests {
             "## Day 1\n\nWe arrived.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), &default_cfg()).unwrap();
 
         assert_eq!(post.slug, "2025-03-18-hawaii");
         assert_eq!(post.title, "Hawaii Trip");
@@ -402,7 +458,7 @@ mod tests {
             "Work in progress.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-05-01 Draft")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-05-01 Draft"), &default_cfg()).unwrap();
 
         assert!(post.is_draft());
         assert!(post.access.is_empty());
@@ -418,17 +474,11 @@ mod tests {
             "title: Hawaii\ndate: \"2025-03-18\"",
             "",
         );
-        make_photo(
-            &post_dir.join("photos").join("2025-03-18 Travel day"),
-            "a.jpg",
-        );
-        make_photo(
-            &post_dir.join("photos").join("2025-03-18 Travel day"),
-            "b.jpg",
-        );
-        make_photo(&post_dir.join("photos").join("2025-03-19 Hiking"), "c.jpg");
+        make_photo(&post_dir.join("2025-03-18 Travel day"), "a.jpg");
+        make_photo(&post_dir.join("2025-03-18 Travel day"), "b.jpg");
+        make_photo(&post_dir.join("2025-03-19 Hiking"), "c.jpg");
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, &default_cfg()).unwrap();
 
         assert_eq!(post.photo_groups.len(), 2);
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
@@ -447,10 +497,10 @@ mod tests {
             "title: Hawaii\ndate: \"2025-03-18\"",
             "",
         );
-        make_photo(&post_dir.join("photos"), "photo1.jpg");
-        make_photo(&post_dir.join("photos"), "photo2.jpg");
+        make_photo(&post_dir, "photo1.jpg");
+        make_photo(&post_dir, "photo2.jpg");
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, &default_cfg()).unwrap();
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "");
@@ -467,7 +517,7 @@ mod tests {
             "",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), &default_cfg()).unwrap();
 
         assert!(post.photo_groups.is_empty());
     }
@@ -488,7 +538,7 @@ mod tests {
             "",
         );
 
-        let site = load_site(tmp.path()).unwrap();
+        let site = load_site(tmp.path(), &default_cfg()).unwrap();
 
         assert_eq!(site.posts.len(), 2);
         assert_eq!(site.posts[0].date, "2025-01-01");
@@ -498,7 +548,7 @@ mod tests {
     #[test]
     fn load_site_empty_directory() {
         let tmp = TempDir::new().unwrap();
-        let site = load_site(tmp.path()).unwrap();
+        let site = load_site(tmp.path(), &default_cfg()).unwrap();
         assert!(site.posts.is_empty());
     }
 }

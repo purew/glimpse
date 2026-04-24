@@ -9,6 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
+use crate::config::Config;
 use crate::content::{self, Post, Site};
 use crate::media::{ImageSize, MediaCache};
 
@@ -25,9 +26,14 @@ const PREPROCESS_CONCURRENCY: usize = 2;
 /// images are not yet ready.
 ///
 /// Reload errors are logged but leave the previous `Site` live.
-pub fn spawn(posts_dir: PathBuf, site: Arc<ArcSwap<Site>>, media_cache: Arc<MediaCache>) {
+pub fn spawn(
+    posts_dir: PathBuf,
+    site: Arc<ArcSwap<Site>>,
+    media_cache: Arc<MediaCache>,
+    cfg: Arc<Config>,
+) {
     let handle = tokio::runtime::Handle::current();
-    std::thread::spawn(move || run(&posts_dir, &site, &media_cache, &handle));
+    std::thread::spawn(move || run(&posts_dir, &site, &media_cache, &handle, &cfg));
 }
 
 fn run(
@@ -35,6 +41,7 @@ fn run(
     site: &Arc<ArcSwap<Site>>,
     media_cache: &Arc<MediaCache>,
     handle: &tokio::runtime::Handle,
+    cfg: &Config,
 ) {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = match notify::recommended_watcher(tx) {
@@ -96,7 +103,7 @@ fn run(
         let mut changed: Vec<Post> = Vec::new();
         for post_dir in &affected {
             if post_dir.is_dir() {
-                match content::parse_post(post_dir) {
+                match content::parse_post(post_dir, cfg) {
                     Ok(post) => {
                         info!(slug = %post.slug, "reloaded post");
                         changed.push(post);
