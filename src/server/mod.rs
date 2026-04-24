@@ -56,6 +56,7 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
         .route("/feed/{token}", get(feed_handler))
         .route("/login", get(login_get_handler).post(login_post_handler))
         .route("/logout", post(logout_handler))
+        .route("/admin/reload", post(admin_reload_handler))
         .nest_service("/static", ServeDir::new(static_dir))
         .with_state(state)
 }
@@ -253,6 +254,23 @@ async fn media_handler(
         )
             .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn admin_reload_handler(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+) -> Response {
+    let viewer = viewer_from_jar(&jar, &state.users);
+    if !viewer.is_admin() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match content::load_site(&state.posts_dir, &state.cfg) {
+        Ok(site) => {
+            state.site.store(Arc::new(site));
+            Redirect::to("/").into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
