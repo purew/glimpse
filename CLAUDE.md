@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Design Principles
+
+- **Modern browsers only** — target current evergreen browsers; use plain HTML, CSS, and browser-native APIs without polyfills or transpilation.
+- **Server-side first** — render and process on the server; keep client-side logic to a minimum.
+- **Simple auth is fine** — the audience is family and friends, not the public internet; favour simplicity over elaborate auth schemes.
+
 ## Commands
 
 ```bash
