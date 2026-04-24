@@ -32,16 +32,23 @@ pub enum ContentError {
 
 // ── Public model ──────────────────────────────────────────────────────────────
 
-/// A group of photos from one subfolder (subfolder name becomes a section heading).
+/// A single media item (photo or video) within a post.
+#[derive(Debug, Clone)]
+pub struct MediaItem {
+    pub path: PathBuf,
+    pub is_video: bool,
+}
+
+/// A group of media from one subfolder (subfolder name becomes a section heading).
 #[derive(Debug, Clone)]
 pub struct PhotoGroup {
-    /// Subfolder name; empty string when photos are flat under `photos/`.
+    /// Subfolder name; empty string when media is flat under `photos/`.
     pub name: String,
-    pub photos: Vec<PathBuf>,
+    pub media: Vec<MediaItem>,
 }
 
 /// A single post parsed from a `posts/` subfolder.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Post {
     /// URL-safe identifier derived from the folder name.
     pub slug: String,
@@ -141,18 +148,32 @@ fn is_photo(path: &Path) -> bool {
     )
 }
 
-fn collect_photos(dir: &Path) -> Result<Vec<PathBuf>, ContentError> {
+fn is_video(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_lowercase)
+            .as_deref(),
+        Some("mp4" | "mov" | "webm")
+    )
+}
+
+fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
         source: e,
     })?;
-    let mut photos: Vec<PathBuf> = entries
+    let mut items: Vec<MediaItem> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| is_photo(p))
+        .filter(|p| is_photo(p) || is_video(p))
+        .map(|p| {
+            let is_video = is_video(&p);
+            MediaItem { path: p, is_video }
+        })
         .collect();
-    photos.sort();
-    Ok(photos)
+    items.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(items)
 }
 
 fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
@@ -171,34 +192,35 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
     entries.sort_by_key(|e| e.file_name());
 
     let mut groups: Vec<PhotoGroup> = Vec::new();
-    let mut flat_photos: Vec<PathBuf> = Vec::new();
+    let mut flat_media: Vec<MediaItem> = Vec::new();
 
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let photos = collect_photos(&path)?;
-            if !photos.is_empty() {
-                groups.push(PhotoGroup { name, photos });
+            let media = collect_media(&path)?;
+            if !media.is_empty() {
+                groups.push(PhotoGroup { name, media });
             }
-        } else if is_photo(&path) {
-            flat_photos.push(path);
+        } else if is_photo(&path) || is_video(&path) {
+            let is_video = is_video(&path);
+            flat_media.push(MediaItem { path, is_video });
         }
     }
 
-    // Flat layout: photos directly under photos/ with no subfolders.
-    if groups.is_empty() && !flat_photos.is_empty() {
-        flat_photos.sort();
+    // Flat layout: media directly under photos/ with no subfolders.
+    if groups.is_empty() && !flat_media.is_empty() {
+        flat_media.sort_by(|a, b| a.path.cmp(&b.path));
         groups.push(PhotoGroup {
             name: String::new(),
-            photos: flat_photos,
+            media: flat_media,
         });
     }
 
     Ok(groups)
 }
 
-fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
+pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
     let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
         path: index_path.clone(),
@@ -410,9 +432,9 @@ mod tests {
 
         assert_eq!(post.photo_groups.len(), 2);
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
-        assert_eq!(post.photo_groups[0].photos.len(), 2);
+        assert_eq!(post.photo_groups[0].media.len(), 2);
         assert_eq!(post.photo_groups[1].name, "2025-03-19 Hiking");
-        assert_eq!(post.photo_groups[1].photos.len(), 1);
+        assert_eq!(post.photo_groups[1].media.len(), 1);
     }
 
     #[test]
@@ -432,7 +454,7 @@ mod tests {
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "");
-        assert_eq!(post.photo_groups[0].photos.len(), 2);
+        assert_eq!(post.photo_groups[0].media.len(), 2);
     }
 
     #[test]

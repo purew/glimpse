@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
-use crate::content::{self, Site};
+use crate::content::{self, Post, Site};
 use crate::media::{ImageSize, MediaCache};
 
 /// Maximum number of derivative images generated concurrently during a reload.
@@ -18,9 +19,10 @@ const PREPROCESS_CONCURRENCY: usize = 2;
 
 /// Spawn a background thread that watches `posts_dir` for filesystem changes.
 ///
-/// On each change the thread rebuilds `Site`, pre-generates all image
-/// derivatives at limited concurrency, then atomically swaps in the new `Site`.
-/// Clients never see a post whose images are not yet ready.
+/// On each change the thread re-parses only the affected post directories,
+/// pre-generates their image derivatives at limited concurrency, then
+/// atomically swaps in the updated `Site`. Clients never see a post whose
+/// images are not yet ready.
 ///
 /// Reload errors are logged but leave the previous `Site` live.
 pub fn spawn(posts_dir: PathBuf, site: Arc<ArcSwap<Site>>, media_cache: Arc<MediaCache>) {
@@ -49,43 +51,97 @@ fn run(
     info!(path = %posts_dir.display(), "watching for changes");
 
     loop {
-        match rx.recv() {
+        // Wait for the first event of a batch.
+        let first = match rx.recv() {
             Err(_) => break,
-            Ok(Err(e)) => {
+            Ok(result) => result,
+        };
+
+        let mut paths: Vec<PathBuf> = match first {
+            Err(e) => {
                 error!(error = %e, "watcher error");
                 continue;
             }
-            Ok(Ok(_)) => {}
-        }
+            Ok(event) => event.paths,
+        };
+
         // Debounce: drain any events that arrive within 300 ms.
         std::thread::sleep(Duration::from_millis(300));
-        while rx.try_recv().is_ok() {}
-
-        match content::load_site(posts_dir) {
-            Ok(new_site) => {
-                handle.block_on(preprocess_derivatives(&new_site, media_cache));
-                info!(count = new_site.posts.len(), "reloaded site");
-                site.store(Arc::new(new_site));
+        while let Ok(result) = rx.try_recv() {
+            if let Ok(event) = result {
+                paths.extend(event.paths);
             }
-            Err(e) => error!(error = %e, "reload failed"),
         }
+
+        // Resolve each event path to its immediate post directory under posts_dir.
+        let affected: HashSet<PathBuf> = paths
+            .iter()
+            .filter_map(|p| post_dir_for_path(posts_dir, p))
+            .collect();
+
+        if affected.is_empty() {
+            continue;
+        }
+
+        // Clone all posts that were not affected.
+        let current = site.load();
+        let mut posts: Vec<Post> = current
+            .posts
+            .iter()
+            .filter(|p| !affected.contains(&p.source_dir))
+            .cloned()
+            .collect();
+
+        // Re-parse each affected directory that still exists.
+        let mut changed: Vec<Post> = Vec::new();
+        for post_dir in &affected {
+            if post_dir.is_dir() {
+                match content::parse_post(post_dir) {
+                    Ok(post) => {
+                        info!(slug = %post.slug, "reloaded post");
+                        changed.push(post);
+                    }
+                    Err(e) => {
+                        error!(path = %post_dir.display(), error = %e, "failed to parse post");
+                    }
+                }
+            } else {
+                info!(path = %post_dir.display(), "post removed");
+            }
+        }
+
+        handle.block_on(preprocess_derivatives(&changed, media_cache));
+
+        posts.extend(changed);
+        posts.sort_by(|a, b| a.date.cmp(&b.date));
+
+        info!(count = posts.len(), "updated site");
+        site.store(Arc::new(Site { posts }));
     }
 }
 
-/// Pre-generate all thumbnail and medium derivatives for every photo in `site`.
+/// Return the immediate child of `posts_dir` that contains `event_path`,
+/// or `None` if `event_path` is not inside `posts_dir` or is `posts_dir` itself.
+fn post_dir_for_path(posts_dir: &Path, event_path: &Path) -> Option<PathBuf> {
+    let rel = event_path.strip_prefix(posts_dir).ok()?;
+    let first = rel.components().next()?;
+    Some(posts_dir.join(first))
+}
+
+/// Pre-generate thumbnail and medium derivatives for the given posts.
 ///
 /// At most `PREPROCESS_CONCURRENCY` images are generated at once. Already-cached
 /// derivatives are skipped cheaply by `MediaCache::ensure`. The function returns
 /// only after every derivative is ready, so the caller can safely swap the site.
-async fn preprocess_derivatives(site: &Site, media_cache: &Arc<MediaCache>) {
-    let work: Vec<(PathBuf, ImageSize)> = site
-        .posts
+async fn preprocess_derivatives(posts: &[Post], media_cache: &Arc<MediaCache>) {
+    let work: Vec<(PathBuf, ImageSize)> = posts
         .iter()
         .flat_map(|p| p.photo_groups.iter())
-        .flat_map(|g| g.photos.iter())
-        .flat_map(|photo| {
+        .flat_map(|g| g.media.iter())
+        .filter(|item| !item.is_video)
+        .flat_map(|item| {
             [ImageSize::Thumbnail, ImageSize::Medium]
-                .map(|size| (photo.clone(), size))
+                .map(|size| (item.path.clone(), size))
                 .into_iter()
         })
         .collect();
