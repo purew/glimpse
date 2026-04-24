@@ -161,7 +161,7 @@ async fn feed_handler(
     let viewer = crate::viewer::Viewer::with_groups(user.groups.iter().cloned());
     let site = state.site.load_full();
     let base_url = derive_base_url(&request_headers);
-    let xml = crate::theme::render_feed(&site, &viewer, &base_url, token);
+    let xml = crate::theme::render_feed(&site, &viewer, &base_url, token, &state.cfg.site_title);
 
     (
         [
@@ -397,7 +397,7 @@ mod tests {
     fn test_state(posts: Vec<Post>, cache_dir: PathBuf) -> AppState {
         AppState {
             site: Arc::new(ArcSwap::from_pointee(Site { posts })),
-            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
+            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR), "Glimpse".to_owned())),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(crate::users::Users::default()),
             cookie_key: Key::generate(),
@@ -413,7 +413,7 @@ mod tests {
     ) -> AppState {
         AppState {
             site: Arc::new(ArcSwap::from_pointee(Site { posts })),
-            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR))),
+            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR), "Glimpse".to_owned())),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(users),
             cookie_key: Key::generate(),

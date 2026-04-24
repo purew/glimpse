@@ -36,6 +36,7 @@ pub enum ThemeError {
 
 pub struct Theme {
     env: Environment<'static>,
+    pub site_title: String,
 }
 
 impl Theme {
@@ -44,11 +45,11 @@ impl Theme {
     /// Templates are read from `{theme_dir}/templates/` on demand. The function
     /// itself does not fail even if the directory is absent; template errors will
     /// surface at render time.
-    pub fn load(theme_dir: &Path) -> Self {
+    pub fn load(theme_dir: &Path, site_title: String) -> Self {
         let templates_dir = theme_dir.join("templates");
         let mut env = Environment::new();
         env.set_loader(path_loader(templates_dir));
-        Self { env }
+        Self { env, site_title }
     }
 
     /// Render the post-listing index page.
@@ -69,7 +70,7 @@ impl Theme {
             .map(PostSummaryCtx::from_post)
             .collect();
 
-        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in })
+        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title })
             .map_err(|e| ThemeError::Render {
                 name: "index.html",
                 source: e,
@@ -94,7 +95,7 @@ impl Theme {
             })?;
 
         let ctx = PostDetailCtx::from_post(post);
-        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in })
+        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title })
             .map_err(|e| ThemeError::Render {
                 name: "post.html",
                 source: e,
@@ -118,7 +119,7 @@ impl Theme {
                 source: e,
             })?;
 
-        tmpl.render(context! { error })
+        tmpl.render(context! { error, site_title => &self.site_title })
             .map_err(|e| ThemeError::Render {
                 name: "login.html",
                 source: e,
@@ -137,7 +138,7 @@ impl Theme {
 /// `token` is the raw (unhashed) feed token for this viewer; it is appended
 /// as `?t=<token>` to every image URL so the media route can authenticate the
 /// request without a cookie.
-pub fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str) -> String {
+pub fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str, site_title: &str) -> String {
     let entries: Vec<Entry> = visible(site, viewer)
         .map(|post| feed_entry(post, base_url, token))
         .collect();
@@ -148,7 +149,7 @@ pub fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str) ->
         .unwrap_or_else(fallback_date);
 
     let feed = Feed {
-        title: Text::plain("Glimpse"),
+        title: Text::plain(site_title),
         id: format!("{base_url}/"),
         updated,
         links: vec![
@@ -398,7 +399,7 @@ mod tests {
     }
 
     fn load_theme() -> Theme {
-        Theme::load(Path::new(THEME_DIR))
+        Theme::load(Path::new(THEME_DIR), "Glimpse".to_owned())
     }
 
     #[test]
@@ -557,7 +558,7 @@ mod tests {
         };
         let viewer = Viewer::with_groups(["family"]);
 
-        let xml = render_feed(&site, &viewer, "https://example.com", "mytoken");
+        let xml = render_feed(&site, &viewer, "https://example.com", "mytoken", "Glimpse");
 
         assert!(
             xml.contains("Hawaii Trip"),
@@ -579,7 +580,7 @@ mod tests {
         };
         let viewer = Viewer::with_groups(["family"]);
 
-        let xml = render_feed(&site, &viewer, "https://example.com", "tok");
+        let xml = render_feed(&site, &viewer, "https://example.com", "tok", "Glimpse");
 
         assert!(xml.contains("Visible"));
         assert!(
@@ -594,7 +595,7 @@ mod tests {
         let site = Site { posts: vec![post] };
         let viewer = Viewer::with_groups(["family"]);
 
-        let xml = render_feed(&site, &viewer, "https://example.com", "tok123");
+        let xml = render_feed(&site, &viewer, "https://example.com", "tok123", "Glimpse");
 
         assert!(
             xml.contains("t=tok123"),
@@ -609,7 +610,7 @@ mod tests {
     #[test]
     fn render_feed_self_link_contains_token() {
         let site = Site { posts: vec![] };
-        let xml = render_feed(&site, &Viewer::public(), "https://example.com", "mytoken");
+        let xml = render_feed(&site, &Viewer::public(), "https://example.com", "mytoken", "Glimpse");
         assert!(xml.contains("mytoken.xml"), "self link should embed token");
     }
 }

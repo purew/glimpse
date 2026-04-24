@@ -13,10 +13,6 @@ use crate::config::Config;
 use crate::content::{self, Post, Site};
 use crate::media::{ImageSize, MediaCache};
 
-/// Maximum number of derivative images generated concurrently during a reload.
-/// Keeping this low ensures background pre-processing does not starve request
-/// serving while new content is being prepared.
-const PREPROCESS_CONCURRENCY: usize = 2;
 
 /// Spawn a background thread that watches `posts_dir` for filesystem changes.
 ///
@@ -117,7 +113,7 @@ fn run(
             }
         }
 
-        handle.block_on(preprocess_derivatives(&changed, media_cache));
+        handle.block_on(preprocess_derivatives(&changed, media_cache, cfg.preprocess_concurrency));
 
         posts.extend(changed);
         posts.sort_by(|a, b| a.date.cmp(&b.date));
@@ -140,7 +136,7 @@ fn post_dir_for_path(posts_dir: &Path, event_path: &Path) -> Option<PathBuf> {
 /// At most `PREPROCESS_CONCURRENCY` images are generated at once. Already-cached
 /// derivatives are skipped cheaply by `MediaCache::ensure`. The function returns
 /// only after every derivative is ready, so the caller can safely swap the site.
-async fn preprocess_derivatives(posts: &[Post], media_cache: &Arc<MediaCache>) {
+async fn preprocess_derivatives(posts: &[Post], media_cache: &Arc<MediaCache>, concurrency: usize) {
     let work: Vec<(PathBuf, ImageSize)> = posts
         .iter()
         .flat_map(|p| p.photo_groups.iter())
@@ -159,11 +155,11 @@ async fn preprocess_derivatives(posts: &[Post], media_cache: &Arc<MediaCache>) {
 
     info!(
         count = work.len(),
-        concurrency = PREPROCESS_CONCURRENCY,
+        concurrency,
         "pre-processing derivatives"
     );
 
-    let sem = Arc::new(Semaphore::new(PREPROCESS_CONCURRENCY));
+    let sem = Arc::new(Semaphore::new(concurrency));
     let mut set = JoinSet::new();
 
     for (photo, size) in work {

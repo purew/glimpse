@@ -1,24 +1,29 @@
+use std::net::SocketAddr;
 use std::path::Path;
 
 use serde::Deserialize;
 use tracing::info;
 
-fn default_video_max_height() -> u32 {
-    1080
-}
-
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct Config {
+    /// Address and port the HTTP server binds to.
+    pub listen: SocketAddr,
+    /// Site title shown in the browser tab and page header.
+    pub site_title: String,
     /// Videos taller than this are skipped at load time.
-    #[serde(default = "default_video_max_height")]
     pub video_max_height: u32,
+    /// Maximum number of image derivatives generated concurrently during a reload.
+    pub preprocess_concurrency: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            video_max_height: default_video_max_height(),
+            listen: "127.0.0.1:3000".parse().expect("valid default address"),
+            site_title: "Glimpse".to_owned(),
+            video_max_height: 1080,
+            preprocess_concurrency: 2,
         }
     }
 }

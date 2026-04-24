@@ -7,7 +7,6 @@ mod users;
 mod viewer;
 mod watcher;
 
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -35,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let site = content::load_site(&posts_dir, &cfg).context("failed to load site")?;
     info!(count = site.posts.len(), "loaded posts");
 
-    let theme = theme::Theme::load(&theme_dir);
+    let theme = theme::Theme::load(&theme_dir, cfg.site_title.clone());
     let users = users::Users::load(Path::new("users.toml")).context("failed to load users")?;
     let cookie_key = key_from_env().context("failed to load session key")?;
 
@@ -43,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
     let media_cache = Arc::new(MediaCache::new(cache_dir));
     watcher::spawn(posts_dir.clone(), Arc::clone(&site), Arc::clone(&media_cache), Arc::clone(&cfg));
 
+    let addr = cfg.listen;
     let state = server::AppState {
         site,
         theme: Arc::new(theme),
@@ -54,7 +54,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = server::router(state, theme_dir.join("static"));
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     info!(%addr, "listening");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
