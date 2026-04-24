@@ -6,24 +6,28 @@ use crate::content::{Post, Site};
 #[derive(Debug, Clone)]
 pub struct Viewer {
     pub groups: Vec<String>,
+    pub logged_in: bool,
 }
 
 impl Viewer {
     pub fn admin() -> Self {
         Self {
             groups: vec!["admin".to_owned()],
+            logged_in: true,
         }
     }
 
     pub fn public() -> Self {
         Self {
             groups: vec!["public".to_owned()],
+            logged_in: false,
         }
     }
 
     pub fn with_groups(groups: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             groups: groups.into_iter().map(Into::into).collect(),
+            logged_in: true,
         }
     }
 

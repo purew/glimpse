@@ -69,7 +69,7 @@ impl Theme {
             .map(PostSummaryCtx::from_post)
             .collect();
 
-        tmpl.render(context! { posts, is_admin => viewer.is_admin() })
+        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in })
             .map_err(|e| ThemeError::Render {
                 name: "index.html",
                 source: e,
@@ -94,7 +94,7 @@ impl Theme {
             })?;
 
         let ctx = PostDetailCtx::from_post(post);
-        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin() })
+        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in })
             .map_err(|e| ThemeError::Render {
                 name: "post.html",
                 source: e,

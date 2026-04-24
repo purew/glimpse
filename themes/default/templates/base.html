@@ -9,6 +9,15 @@
 <body>
   <header class="site-header">
     <a href="/" class="site-title">Glimpse</a>
+    <nav class="site-nav">
+      {% if logged_in %}
+      <form method="post" action="/logout">
+        <button type="submit" class="nav-link nav-link--button">Logout</button>
+      </form>
+      {% else %}
+      <a href="/login" class="nav-link">Login</a>
+      {% endif %}
+    </nav>
   </header>
   <main>
     {% block content %}{% endblock %}
