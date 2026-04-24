@@ -217,7 +217,7 @@ async fn media_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let source = post.source_dir.join("photos").join(&file_path);
+    let source = post.source_dir.join(&file_path);
 
     let size = match params.size.as_deref() {
         Some("thumb") => Some(ImageSize::Thumbnail),
@@ -242,7 +242,7 @@ async fn media_handler(
         };
     }
 
-    let content_type = image_content_type(&source);
+    let content_type = media_content_type(&source);
     match tokio::fs::read(&source).await {
         Ok(bytes) => (
             [
@@ -303,7 +303,7 @@ fn is_safe_subpath(path: &str) -> bool {
         .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
-fn image_content_type(path: &std::path::Path) -> &'static str {
+fn media_content_type(path: &std::path::Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())
@@ -314,6 +314,9 @@ fn image_content_type(path: &std::path::Path) -> &'static str {
         Some("png") => "image/png",
         Some("webp") => "image/webp",
         Some("gif") => "image/gif",
+        Some("mp4") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
         _ => "application/octet-stream",
     }
 }
@@ -323,7 +326,7 @@ fn image_content_type(path: &std::path::Path) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::{PhotoGroup, Post, Site};
+    use crate::content::{MediaItem, PhotoGroup, Post, Site};
     use axum::http::Request;
     use http_body_util::BodyExt;
     use std::path::Path;
@@ -348,7 +351,6 @@ mod tests {
     }
 
     fn make_post_with_photo(slug: &str, source_dir: &Path) -> Post {
-        let photos_base = source_dir.join("photos");
         Post {
             slug: slug.into(),
             title: "Photo Post".into(),
@@ -358,7 +360,7 @@ mod tests {
             body_html: String::new(),
             photo_groups: vec![PhotoGroup {
                 name: String::new(),
-                photos: vec![photos_base.join("img.jpg")],
+                media: vec![MediaItem { path: source_dir.join("img.jpg"), is_video: false }],
             }],
             source_dir: source_dir.to_owned(),
         }
@@ -559,9 +561,7 @@ mod tests {
     #[tokio::test]
     async fn media_serves_original_with_short_cache() {
         let tmp = TempDir::new().unwrap();
-        let photos_dir = tmp.path().join("photos");
-        std::fs::create_dir_all(&photos_dir).unwrap();
-        write_test_image(&photos_dir.join("img.png"), 10, 10);
+        write_test_image(&tmp.path().join("img.png"), 10, 10);
 
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
@@ -604,9 +604,7 @@ mod tests {
     #[tokio::test]
     async fn media_serves_thumbnail_with_immutable_cache() {
         let tmp = TempDir::new().unwrap();
-        let photos_dir = tmp.path().join("photos");
-        std::fs::create_dir_all(&photos_dir).unwrap();
-        write_test_image(&photos_dir.join("img.png"), 800, 600);
+        write_test_image(&tmp.path().join("img.png"), 800, 600);
 
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
@@ -632,9 +630,7 @@ mod tests {
     #[tokio::test]
     async fn media_serves_medium_derivative() {
         let tmp = TempDir::new().unwrap();
-        let photos_dir = tmp.path().join("photos");
-        std::fs::create_dir_all(&photos_dir).unwrap();
-        write_test_image(&photos_dir.join("img.png"), 2000, 1500);
+        write_test_image(&tmp.path().join("img.png"), 2000, 1500);
 
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));
@@ -746,9 +742,7 @@ mod tests {
     #[tokio::test]
     async fn media_serves_image_with_valid_feed_token() {
         let tmp = TempDir::new().unwrap();
-        let photos_dir = tmp.path().join("photos");
-        std::fs::create_dir_all(&photos_dir).unwrap();
-        write_test_image(&photos_dir.join("img.png"), 10, 10);
+        write_test_image(&tmp.path().join("img.png"), 10, 10);
 
         let users = users_with_feed_token("feedtok");
         let post = Post {
@@ -777,9 +771,7 @@ mod tests {
     #[tokio::test]
     async fn media_returns_404_for_invalid_feed_token() {
         let tmp = TempDir::new().unwrap();
-        let photos_dir = tmp.path().join("photos");
-        std::fs::create_dir_all(&photos_dir).unwrap();
-        write_test_image(&photos_dir.join("img.png"), 10, 10);
+        write_test_image(&tmp.path().join("img.png"), 10, 10);
 
         let post = make_post_with_photo("trip", tmp.path());
         let app = build_router(test_state(vec![post], tmp.path().join("cache")));

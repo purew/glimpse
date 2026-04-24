@@ -25,14 +25,22 @@
     <h2 class="gallery-heading">{{ group.name }}</h2>
     {% endif %}
     <div class="gallery">
-      {% for photo in group.photos %}
-      <a href="{{ photo.url }}" class="gallery-item" data-lightbox data-medium="{{ photo.medium }}">
+      {% for item in group.media %}
+      {% if item.is_video %}
+      <div class="gallery-item gallery-item--video">
+        <video controls preload="metadata">
+          <source src="{{ item.url }}">
+        </video>
+      </div>
+      {% else %}
+      <a href="{{ item.url }}" class="gallery-item" data-lightbox data-medium="{{ item.medium }}">
         <img
-          src="{{ photo.medium }}"
-          srcset="{{ photo.thumb }} 400w, {{ photo.medium }} 1200w"
+          src="{{ item.medium }}"
+          srcset="{{ item.thumb }} 400w, {{ item.medium }} 1200w"
           sizes="(max-width: 640px) calc(100vw - 2rem), 760px"
           alt="" loading="lazy">
       </a>
+      {% endif %}
       {% endfor %}
     </div>
   </section>

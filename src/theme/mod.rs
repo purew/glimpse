@@ -11,7 +11,7 @@ use minijinja::{Environment, context, path_loader};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::content::{Post, Site};
+use crate::content::{MediaItem, Post, Site};
 use crate::viewer::{Viewer, visible};
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -204,9 +204,11 @@ fn entry_content_html(post: &Post, base_url: &str, token: &str) -> String {
         if !group.name.is_empty() {
             html.push_str(&format!("<h2>{}</h2>\n", group.name));
         }
-        for photo in &group.photos {
-            let photos_dir = post.source_dir.join("photos");
-            let rel = photo.strip_prefix(&photos_dir).unwrap_or(photo);
+        for item in &group.media {
+            if item.is_video {
+                continue;
+            }
+            let rel = item.path.strip_prefix(&post.source_dir).unwrap_or(&item.path);
             let url = format!("{base_url}/media/{}/{}", post.slug, rel.display());
             html.push_str(&format!(
                 "<img src=\"{url}?size=medium&amp;t={token}\" style=\"max-width:100%;display:block\">\n"
@@ -237,33 +239,38 @@ fn fallback_date() -> DateTime<FixedOffset> {
 // These structs translate the domain model into template-friendly values. Paths
 // become URL strings, counts are computed here so templates stay logic-free.
 
-/// Compute the media URL for a photo given its absolute path and the post slug.
-///
-/// The path is made relative to `{source_dir}/photos/`, then prefixed with
-/// `/media/{slug}/`. Subdirectory structure is preserved.
-fn photo_url(slug: &str, source_dir: &Path, photo: &Path) -> String {
-    let photos_dir = source_dir.join("photos");
-    let rel = photo.strip_prefix(&photos_dir).unwrap_or(photo);
+fn media_url(slug: &str, source_dir: &Path, path: &Path) -> String {
+    let rel = path.strip_prefix(source_dir).unwrap_or(path);
     format!("/media/{}/{}", slug, rel.display())
 }
 
-/// URL variants for a single photo, used in templates for srcset and lightbox.
 #[derive(Debug, Serialize)]
-struct PhotoCtx {
-    /// Original file URL (used as the `<a href>` for progressive enhancement).
+struct MediaCtx {
     url: String,
-    /// `?size=thumb` derivative URL (400 px wide, for srcset).
+    /// `?size=thumb` derivative URL; empty for videos.
     thumb: String,
-    /// `?size=medium` derivative URL (1200 px wide, default display src).
+    /// `?size=medium` derivative URL; empty for videos.
     medium: String,
+    is_video: bool,
 }
 
-impl PhotoCtx {
-    fn new(slug: &str, source_dir: &Path, photo: &Path) -> Self {
-        let url = photo_url(slug, source_dir, photo);
+impl MediaCtx {
+    fn from_item(slug: &str, source_dir: &Path, item: &MediaItem) -> Self {
+        let url = media_url(slug, source_dir, &item.path);
+        if item.is_video {
+            Self { url, thumb: String::new(), medium: String::new(), is_video: true }
+        } else {
+            let thumb = format!("{url}?size=thumb");
+            let medium = format!("{url}?size=medium");
+            Self { url, thumb, medium, is_video: false }
+        }
+    }
+
+    fn from_photo_path(slug: &str, source_dir: &Path, path: &Path) -> Self {
+        let url = media_url(slug, source_dir, path);
         let thumb = format!("{url}?size=thumb");
         let medium = format!("{url}?size=medium");
-        Self { url, thumb, medium }
+        Self { url, thumb, medium, is_video: false }
     }
 }
 
@@ -273,17 +280,17 @@ struct PostSummaryCtx {
     title: String,
     date: String,
     is_draft: bool,
-    cover: Option<PhotoCtx>,
+    cover: Option<MediaCtx>,
     photo_count: usize,
 }
 
 impl PostSummaryCtx {
     fn from_post(post: &Post) -> Self {
-        let photo_count = post.photo_groups.iter().map(|g| g.photos.len()).sum();
+        let photo_count = post.photo_groups.iter().map(|g| g.media.len()).sum();
         let cover = post
             .cover
             .as_deref()
-            .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p));
+            .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p));
         Self {
             slug: post.slug.clone(),
             title: post.title.clone(),
@@ -298,7 +305,7 @@ impl PostSummaryCtx {
 #[derive(Debug, Serialize)]
 struct PhotoGroupCtx {
     name: String,
-    photos: Vec<PhotoCtx>,
+    media: Vec<MediaCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -308,7 +315,7 @@ struct PostDetailCtx {
     date: String,
     is_draft: bool,
     body_html: String,
-    cover: Option<PhotoCtx>,
+    cover: Option<MediaCtx>,
     photo_groups: Vec<PhotoGroupCtx>,
 }
 
@@ -317,19 +324,19 @@ impl PostDetailCtx {
         let cover = post
             .cover
             .as_deref()
-            .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p));
+            .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p));
         let photo_groups = post
             .photo_groups
             .iter()
             .map(|group| {
-                let photos = group
-                    .photos
+                let media = group
+                    .media
                     .iter()
-                    .map(|p| PhotoCtx::new(&post.slug, &post.source_dir, p))
+                    .map(|item| MediaCtx::from_item(&post.slug, &post.source_dir, item))
                     .collect();
                 PhotoGroupCtx {
                     name: group.name.clone(),
-                    photos,
+                    media,
                 }
             })
             .collect();
@@ -351,7 +358,7 @@ impl PostDetailCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::PhotoGroup;
+    use crate::content::{MediaItem, PhotoGroup};
     use std::path::PathBuf;
 
     const THEME_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes/default");
@@ -371,7 +378,7 @@ mod tests {
 
     fn make_post_with_photos(slug: &str) -> Post {
         let source_dir = PathBuf::from("/posts").join(slug);
-        let photos_dir = source_dir.join("photos").join("Day 1");
+        let day1_dir = source_dir.join("Day 1");
         Post {
             slug: slug.into(),
             title: "With Photos".into(),
@@ -381,7 +388,10 @@ mod tests {
             body_html: String::new(),
             photo_groups: vec![PhotoGroup {
                 name: "Day 1".into(),
-                photos: vec![photos_dir.join("a.jpg"), photos_dir.join("b.jpg")],
+                media: vec![
+                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false },
+                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false },
+                ],
             }],
             source_dir,
         }
@@ -516,21 +526,21 @@ mod tests {
     }
 
     #[test]
-    fn photo_url_flat_photo() {
+    fn media_url_flat_photo() {
         let source = PathBuf::from("/posts/hawaii");
-        let photo = source.join("photos").join("img.jpg");
+        let photo = source.join("img.jpg");
         assert_eq!(
-            photo_url("hawaii", &source, &photo),
+            media_url("hawaii", &source, &photo),
             "/media/hawaii/img.jpg"
         );
     }
 
     #[test]
-    fn photo_url_subfolder_photo() {
+    fn media_url_subfolder_photo() {
         let source = PathBuf::from("/posts/hawaii");
-        let photo = source.join("photos").join("Day 1").join("img.jpg");
+        let photo = source.join("Day 1").join("img.jpg");
         assert_eq!(
-            photo_url("hawaii", &source, &photo),
+            media_url("hawaii", &source, &photo),
             "/media/hawaii/Day 1/img.jpg"
         );
     }
