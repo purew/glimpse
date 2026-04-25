@@ -1,6 +1,58 @@
 # glimpse-rs
 
-A private family blog service. Posts are photo-centred with per-post access control by group.
+Glimpse serves select photo folders and narration from your personal photo files library as blog posts. Posts can be fully public or restricted under certain access groups like `family` and `friends`. I built this as a way of sharing life updates with remote family and friends.
+
+It assumes you have your photo library arranged like so:
+
+```
+├── 2025-03-18 Hawaii
+│   ├── index.md
+│   └── photos
+│       ├── 2025-03-18 Travel day
+│       │   ├── 2025-03-16_nikon z6_3_dsc_031.jpg
+│       │   ├── 2025-03-18_sm-s901u1_20250318_211908.jpg
+│       │   └── 2025-03-18_sm-s901u1_20250318_211932.jpg
+│       ├── 2025-03-19 Manoa Falls hiking
+│       │   ├── 2025-03-19_nikon z6_3_dsc_0742.jpg
+│       │   └── 2025-03-19_sm-s901u1_20250319_073233.jpg
+│       └── 2025-03-20 Diamondhead crater hiking
+├── 2018-05-28 Visiting Washington DC
+│   ├── index.md
+│   └── photos
+│       ├── 2018-05-28_080456_d7500_dsc_0960.jpg
+│       ├── 2018-05-28_081605_d7500_dsc_0967.jpg
+│       ├── 2018-05-28_081615_d7500_dsc_0968.jpg
+...
+```
+
+Each root level folder becomes its own blog post with beautiful rendering of photos and videos if `index.md` is properly defined.
+
+## Defining `index.md`
+
+`index.md` defines a new blog post when placed in the root of a post folder.
+
+It's expected to have the following frontmatter format, defining `title`, `date`, `access`, optional `cover` photo. After the frontmatter, you add freeform markdown text for the blog post. Typically in my own usage, this describes the situation and location, what people attended and any interesting tidbits I'd like to save for the future and share with my close ones.
+
+```
+---
+title: "2025-03 Hawaii"
+date: 2025-03-18
+access: [family, friends]
+cover: "2025-03-19_nikon z6_3_dsc_0808.jpg"
+---
+
+
+# Hawaii travel
+
+Lorem ipsum ...
+
+```
+
+## Design Principles
+
+- **Modern browsers only** — target current evergreen browsers; use plain HTML, CSS, and browser-native APIs without polyfills or transpilation.
+- **Server-side first** — render and process on the server; keep client-side logic to a minimum.
+- **Simple auth is fine** — the audience is family and friends, not the public internet; favour simplicity over elaborate auth schemes.
 
 ## Running
 
@@ -9,7 +61,26 @@ export GLIMPSE_SESSION_SECRET=$(openssl rand -hex 64)
 cargo run
 ```
 
-Serves on `http://127.0.0.1:3000`. Requires `posts/` and `themes/default/` to be present. `users.toml` is optional — if absent the server starts with no registered users.
+Serves on `http://127.0.0.1:3000` by default. Requires `themes/default/` to be present. `users.toml` and `glimpse.toml` are optional — if absent the server starts with defaults and no registered users.
+
+Pass `--config` or `--users` to override the default file paths:
+
+```bash
+cargo run -- --config /etc/glimpse/glimpse.toml --users /etc/glimpse/users.toml
+```
+
+## glimpse.toml
+
+All fields are optional. The file itself is optional — omitting it uses the defaults shown below.
+
+```toml
+listen        = "127.0.0.1:3000"  # address and port to bind
+site_title    = "Glimpse"         # shown in browser tab and page header
+posts_dir     = "posts"           # directory containing post subdirectories
+cache_dir     = "cache"           # directory for generated image/video derivatives
+video_max_height     = 1080       # videos taller than this are skipped at load time
+preprocess_concurrency = 2        # max concurrent derivative generation during reload
+```
 
 ## users.toml
 
@@ -51,7 +122,7 @@ Edit `users.toml`, replace the `password_hash` value with a new hash, and restar
 
 ## Post format
 
-Posts live under `posts/` as dated folders:
+Posts live under `posts/` (or the configured `posts_dir`) as dated folders:
 
 ```
 posts/
@@ -75,7 +146,15 @@ cover: "photos/.../x.jpg" # optional hero image
 ---
 ```
 
-Omitting `access` (or leaving it empty) makes a post a **draft** — visible only to `admin`. Adding at least one group publishes it.
+**Access values:**
+
+| `access` value | Visibility |
+|----------------|------------|
+| `[public]` | Everyone, including unauthenticated visitors |
+| `[family]`, `[friends]`, etc. | Logged-in users whose groups overlap |
+| omitted or `[]` | Draft — visible only to `admin` |
+
+Adding at least one group publishes a post. `admin` users always see everything including drafts.
 
 ## Atom feeds
 
@@ -129,6 +208,7 @@ Replace `feed_token_hash` with a new value from `generate-feed-token` (or delete
 | Command | Purpose |
 |---------|---------|
 | `cargo run` | Start the server |
+| `cargo clippy` | Lint (must be clean before committing) |
+| `cargo test` | Run the test suite |
 | `cargo run --bin hash-password -- <pw>` | Generate an argon2 hash for users.toml |
 | `cargo run --bin generate-feed-token` | Mint a new Atom feed token for a user |
-| `cargo test` | Run the test suite |
