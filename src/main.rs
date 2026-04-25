@@ -7,9 +7,10 @@ mod users;
 mod viewer;
 mod watcher;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use clap::Parser;
 use anyhow::{Context, bail};
 use arc_swap::ArcSwap;
 use axum_extra::extract::cookie::Key;
@@ -17,13 +18,24 @@ use tracing::info;
 
 use media::MediaCache;
 
+#[derive(Parser)]
+struct Args {
+    /// Path to the TOML configuration file.
+    #[arg(long, default_value = "glimpse.toml")]
+    config: PathBuf,
+    /// Path to the users TOML file.
+    #[arg(long, default_value = "users.toml")]
+    users: PathBuf,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let cfg = Arc::new(config::Config::load(Path::new("glimpse.toml")).context("failed to load config")?);
+    let args = Args::parse();
+    let cfg = Arc::new(config::Config::load(&args.config).context("failed to load config")?);
 
     let posts_dir = PathBuf::from("posts");
     let theme_dir = std::env::var("GLIMPSE_THEME_DIR")
@@ -35,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     info!(count = site.posts.len(), "loaded posts");
 
     let theme = theme::Theme::load(&theme_dir, cfg.site_title.clone());
-    let users = users::Users::load(Path::new("users.toml")).context("failed to load users")?;
+    let users = users::Users::load(&args.users).context("failed to load users")?;
     let cookie_key = key_from_env().context("failed to load session key")?;
 
     let site = Arc::new(ArcSwap::from_pointee(site));

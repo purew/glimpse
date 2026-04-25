@@ -18,6 +18,16 @@
         sizes="(max-width: 640px) calc(100vw - 2rem), 320px"
         alt="{{ post.title }}" loading="lazy">
     </a>
+    {% elif post.preview_photos %}
+    <a href="/posts/{{ post.slug }}" class="post-card-cover">
+      <div class="post-card-collage post-card-collage--{{ post.preview_photos | length }}">
+        {% for photo in post.preview_photos %}
+        <div class="collage-img">
+          <img src="{{ photo.thumb }}" alt="{{ post.title }}" loading="lazy">
+        </div>
+        {% endfor %}
+      </div>
+    </a>
     {% else %}
     <a href="/posts/{{ post.slug }}" class="post-card-cover post-card-cover--empty">
       <span class="photo-count">{{ post.photo_count }} photo{% if post.photo_count != 1 %}s{% endif %}</span>

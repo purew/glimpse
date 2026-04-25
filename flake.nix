@@ -12,7 +12,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, crane, rust-overlay }:
+  outputs = { self, nixpkgs, crane, rust-overlay } @inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -68,6 +68,89 @@
         inherit glimpse;
         default = glimpse;
       };
+
+      nixosModules.glimpse = { config, lib, pkgs, ... }:
+        let
+          cfg = config.services.glimpse;
+          configFile = (pkgs.formats.toml { }).generate "glimpse.toml" {
+            listen = cfg.listen;
+            site_title = cfg.siteTitle;
+            video_max_height = cfg.videoMaxHeight;
+            preprocess_concurrency = cfg.preprocessConcurrency;
+          };
+        in
+        {
+          options.services.glimpse = {
+            enable = lib.mkEnableOption "Glimpse photo-blog server";
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = self.packages.${pkgs.system}.default;
+              defaultText = lib.literalExpression "glimpse-rs from this flake";
+              description = "The glimpse-rs package to use.";
+            };
+
+            stateDir = lib.mkOption {
+              type = lib.types.str;
+              default = "/var/lib/glimpse";
+              description = "Working directory for posts/, cache/, and users.toml.";
+            };
+
+            sessionSecretFile = lib.mkOption {
+              type = lib.types.path;
+              description = ''
+                Path to a file exporting GLIMPSE_SESSION_SECRET as a 128-character
+                hex string (64 bytes).  Generate with: openssl rand -hex 64
+              '';
+            };
+
+            usersFile = lib.mkOption {
+              type = lib.types.path;
+              default = "${cfg.stateDir}/users.toml";
+              defaultText = lib.literalExpression ''"''${config.services.glimpse.stateDir}/users.toml"'';
+              description = "Path to users.toml.";
+            };
+
+            listen = lib.mkOption {
+              type = lib.types.str;
+              default = "127.0.0.1:3000";
+              description = "Address and port the server binds to.";
+            };
+
+            siteTitle = lib.mkOption {
+              type = lib.types.str;
+              default = "Glimpse";
+              description = "Title shown in the browser tab and page header.";
+            };
+
+            videoMaxHeight = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 1080;
+              description = "Videos taller than this are skipped at load time.";
+            };
+
+            preprocessConcurrency = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 2;
+              description = "Maximum number of image derivatives generated concurrently during a reload.";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            systemd.services.glimpse = {
+              description = "Glimpse photo-blog server";
+              wantedBy = [ "multi-user.target" ];
+              after = [ "network.target" ];
+              serviceConfig = {
+                ExecStart = "${cfg.package}/bin/glimpse-rs --config ${configFile} --users ${cfg.usersFile}";
+                EnvironmentFile = cfg.sessionSecretFile;
+                WorkingDirectory = cfg.stateDir;
+                StateDirectory = "glimpse";
+                Restart = "on-failure";
+              };
+            };
+          };
+        };
 
       devShells.${system}.default = pkgs.mkShell {
         nativeBuildInputs = [ pkgs.pkg-config toolchain ];

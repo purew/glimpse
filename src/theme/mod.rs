@@ -283,6 +283,8 @@ struct PostSummaryCtx {
     is_draft: bool,
     cover: Option<MediaCtx>,
     photo_count: usize,
+    /// Up to 3 non-video photos used for the collage preview when no cover is set.
+    preview_photos: Vec<MediaCtx>,
 }
 
 impl PostSummaryCtx {
@@ -292,6 +294,14 @@ impl PostSummaryCtx {
             .cover
             .as_deref()
             .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p));
+        let preview_photos: Vec<MediaCtx> = post
+            .photo_groups
+            .iter()
+            .flat_map(|g| g.media.iter())
+            .filter(|item| !item.is_video)
+            .take(3)
+            .map(|item| MediaCtx::from_item(&post.slug, &post.source_dir, item))
+            .collect();
         Self {
             slug: post.slug.clone(),
             title: post.title.clone(),
@@ -299,6 +309,7 @@ impl PostSummaryCtx {
             is_draft: post.is_draft(),
             cover,
             photo_count,
+            preview_photos,
         }
     }
 }

@@ -120,6 +120,7 @@ main {
   aspect-ratio: 4 / 3;
   overflow: hidden;
   background: var(--color-surface);
+  position: relative;
 }
 
 .post-card-cover img {
@@ -138,6 +139,45 @@ main {
   align-items: center;
   justify-content: center;
   text-decoration: none;
+}
+
+.post-card-collage {
+  display: grid;
+  position: absolute;
+  inset: 0;
+  gap: 2px;
+}
+
+.post-card-collage--1 {
+  grid-template-columns: 1fr;
+}
+
+.post-card-collage--2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.post-card-collage--3 {
+  grid-template-columns: 3fr 2fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.post-card-collage--3 .collage-img:first-child {
+  grid-row: 1 / 3;
+}
+
+.collage-img {
+  overflow: hidden;
+}
+
+.collage-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s ease;
+}
+
+.post-card:hover .collage-img img {
+  transform: scale(1.02);
 }
 
 .photo-count {

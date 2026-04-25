@@ -297,8 +297,23 @@ pub fn parse_post(post_dir: &Path, cfg: &crate::config::Config) -> Result<Post, 
         .unwrap_or_default();
     let slug = slug_from_dir_name(&dir_name);
     let body_html = render_markdown(body);
-    let cover = fm.cover.map(|c| post_dir.join(c));
     let photo_groups = discover_photo_groups(post_dir, cfg.video_max_height)?;
+    let cover = fm.cover.map(|c| {
+        // Search discovered media for a file whose name matches `c`, so the
+        // frontmatter value only needs to be the filename regardless of which
+        // subfolder it lives in.
+        match photo_groups
+            .iter()
+            .flat_map(|g| g.media.iter())
+            .find(|item| item.path.file_name().is_some_and(|n| n == c.as_str()))
+        {
+            Some(item) => item.path.clone(),
+            None => {
+                warn!(post = %slug, cover = %c, "cover photo not found among discovered media");
+                post_dir.join(&c)
+            }
+        }
+    });
 
     Ok(Post {
         slug,

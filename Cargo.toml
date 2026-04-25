@@ -6,6 +6,7 @@ default-run = "glimpse-rs"
 
 [dependencies]
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 arc-swap = "1"
 argon2 = "0.5"
 atom_syndication = "0.12"
