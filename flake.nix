@@ -150,6 +150,12 @@
               default = 2;
               description = "Maximum number of image derivatives generated concurrently during a reload.";
             };
+
+            logLevel = lib.mkOption {
+              type = lib.types.str;
+              default = "info";
+              description = "Value passed to RUST_LOG.";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -160,6 +166,7 @@
               serviceConfig = {
                 ExecStart = "${cfg.package}/bin/glimpse-rs --config ${configFile} --users ${cfg.usersFile}";
                 EnvironmentFile = cfg.sessionSecretFile;
+                Environment = "RUST_LOG=${cfg.logLevel}";
                 WorkingDirectory = cfg.stateDir;
                 StateDirectory = "glimpse";
                 Restart = "on-failure";
