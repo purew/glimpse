@@ -222,6 +222,7 @@ async fn media_handler(
     };
 
     let source = post.source_dir.join(&file_path);
+    let is_public = post.access.iter().any(|g| g == "public");
 
     let size = match params.size.as_deref() {
         Some("thumb") => Some(ImageSize::Thumbnail),
@@ -230,6 +231,11 @@ async fn media_handler(
     };
 
     if let Some(size) = size {
+        let cache_control = if is_public {
+            "public, max-age=31536000, immutable"
+        } else {
+            "private, max-age=31536000, immutable"
+        };
         return match state.media_cache.ensure(&source, size).await {
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Ok(path) => match tokio::fs::read(&path).await {
@@ -237,7 +243,7 @@ async fn media_handler(
                 Ok(bytes) => (
                     [
                         (header::CONTENT_TYPE, "image/jpeg"),
-                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                        (header::CACHE_CONTROL, cache_control),
                     ],
                     bytes,
                 )
@@ -247,11 +253,12 @@ async fn media_handler(
     }
 
     let content_type = media_content_type(&source);
+    let cache_control = if is_public { "public, max-age=3600" } else { "private, max-age=3600" };
     match tokio::fs::read(&source).await {
         Ok(bytes) => (
             [
                 (header::CONTENT_TYPE, content_type),
-                (header::CACHE_CONTROL, "public, max-age=3600"),
+                (header::CACHE_CONTROL, cache_control),
             ],
             bytes,
         )
@@ -668,6 +675,53 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let img = image::load_from_memory(&bytes).unwrap();
         assert!(img.width() <= 1200);
+    }
+
+    #[tokio::test]
+    async fn media_serves_original_with_private_cache_for_non_public_post() {
+        let tmp = TempDir::new().unwrap();
+        write_test_image(&tmp.path().join("img.png"), 10, 10);
+
+        let mut post = make_post_with_photo("trip", tmp.path());
+        post.access = vec!["family".into()];
+        let users = users_with_feed_token("tok");
+        let app = build_router(test_state_with_users(
+            vec![post],
+            tmp.path().join("cache"),
+            users,
+        ));
+
+        let resp = app.oneshot(get("/media/trip/img.png?t=tok")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=3600"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_serves_derivative_with_private_cache_for_non_public_post() {
+        let tmp = TempDir::new().unwrap();
+        write_test_image(&tmp.path().join("img.png"), 800, 600);
+
+        let mut post = make_post_with_photo("trip", tmp.path());
+        post.access = vec!["family".into()];
+        let users = users_with_feed_token("tok");
+        let app = build_router(test_state_with_users(
+            vec![post],
+            tmp.path().join("cache"),
+            users,
+        ));
+
+        let resp = app
+            .oneshot(get("/media/trip/img.png?size=thumb&t=tok"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=31536000, immutable"
+        );
     }
 
     // ── Path safety ───────────────────────────────────────────────────────────
