@@ -75,6 +75,8 @@
           configFile = (pkgs.formats.toml { }).generate "glimpse.toml" {
             listen = cfg.listen;
             site_title = cfg.siteTitle;
+            posts_dir = cfg.postsDir;
+            cache_dir = cfg.cacheDir;
             video_max_height = cfg.videoMaxHeight;
             preprocess_concurrency = cfg.preprocessConcurrency;
           };
@@ -109,6 +111,20 @@
               default = "${cfg.stateDir}/users.toml";
               defaultText = lib.literalExpression ''"''${config.services.glimpse.stateDir}/users.toml"'';
               description = "Path to users.toml.";
+            };
+
+            postsDir = lib.mkOption {
+              type = lib.types.str;
+              default = "${cfg.stateDir}/posts";
+              defaultText = lib.literalExpression ''"''${config.services.glimpse.stateDir}/posts"'';
+              description = "Directory containing post subdirectories.";
+            };
+
+            cacheDir = lib.mkOption {
+              type = lib.types.str;
+              default = "${cfg.stateDir}/cache";
+              defaultText = lib.literalExpression ''"''${config.services.glimpse.stateDir}/cache"'';
+              description = "Directory where generated image/video derivatives are cached.";
             };
 
             listen = lib.mkOption {

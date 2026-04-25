@@ -37,11 +37,11 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let cfg = Arc::new(config::Config::load(&args.config).context("failed to load config")?);
 
-    let posts_dir = PathBuf::from("posts");
+    let posts_dir = cfg.posts_dir.clone();
+    let cache_dir = cfg.cache_dir.clone();
     let theme_dir = std::env::var("GLIMPSE_THEME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("themes/default"));
-    let cache_dir = PathBuf::from("cache");
 
     let site = content::load_site(&posts_dir, &cfg).context("failed to load site")?;
     info!(count = site.posts.len(), "loaded posts");
