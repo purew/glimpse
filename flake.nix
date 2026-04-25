@@ -59,7 +59,8 @@
           mkdir -p $out/share/glimpse-rs
           cp -r --no-preserve=mode ${src}/themes $out/share/glimpse-rs/
           wrapProgram $out/bin/glimpse-rs \
-            --set GLIMPSE_THEME_DIR $out/share/glimpse-rs/themes/default
+            --set GLIMPSE_THEME_DIR $out/share/glimpse-rs/themes/default \
+            --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
         '';
       });
     in
