@@ -9,6 +9,7 @@ use atom_syndication::{Content, Entry, Feed, Link, Text};
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime};
 use minijinja::{Environment, context, path_loader};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::content::{MediaItem, Post, Site};
@@ -37,6 +38,7 @@ pub enum ThemeError {
 pub struct Theme {
     env: Environment<'static>,
     pub site_title: String,
+    style_version: String,
 }
 
 impl Theme {
@@ -49,7 +51,8 @@ impl Theme {
         let templates_dir = theme_dir.join("templates");
         let mut env = Environment::new();
         env.set_loader(path_loader(templates_dir));
-        Self { env, site_title }
+        let style_version = hash_file(&theme_dir.join("static").join("style.css"));
+        Self { env, site_title, style_version }
     }
 
     /// Render the post-listing index page.
@@ -70,7 +73,7 @@ impl Theme {
             .map(PostSummaryCtx::from_post)
             .collect();
 
-        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title })
+        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "index.html",
                 source: e,
@@ -95,7 +98,7 @@ impl Theme {
             })?;
 
         let ctx = PostDetailCtx::from_post(post);
-        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title })
+        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "post.html",
                 source: e,
@@ -119,7 +122,7 @@ impl Theme {
                 source: e,
             })?;
 
-        tmpl.render(context! { error, site_title => &self.site_title })
+        tmpl.render(context! { error, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "login.html",
                 source: e,
@@ -233,6 +236,14 @@ fn fallback_date() -> DateTime<FixedOffset> {
         .and_time(NaiveTime::from_hms_opt(0, 0, 0).expect("valid time"))
         .and_utc()
         .fixed_offset()
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn hash_file(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    let digest = Sha256::digest(&bytes);
+    format!("{digest:x}")[..8].to_owned()
 }
 
 // ── View models ───────────────────────────────────────────────────────────────
