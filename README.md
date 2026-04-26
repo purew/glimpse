@@ -84,13 +84,14 @@ preprocess_concurrency = 2        # max concurrent derivative generation during 
 
 ## users.toml
 
-`users.toml` is not tracked in git — create it manually next to the binary or in the working directory.
+`users.toml` is not tracked in git — manage it with the `manage-users` binary or create it by hand next to the server binary.
 
 ```toml
 [[users]]
 username = "alice"
 password_hash = "$argon2id$v=19$m=19456,t=2,p=1$..."
 groups = ["family"]
+feed_token_hash = "d4e2f9b7..."   # optional; enables the Atom feed for this user
 
 [[users]]
 username = "admin"
@@ -100,25 +101,49 @@ groups = ["admin"]
 
 **Fields:**
 
-| Field           | Required | Description |
-|----------------|----------|-------------|
-| `username`      | yes      | Login name; case-sensitive |
-| `password_hash` | yes      | Argon2id hash produced by `cargo run --bin hash-password` |
-| `groups`        | yes      | List of group names this user belongs to |
+| Field             | Required | Description |
+|-------------------|----------|-------------|
+| `username`        | yes      | Login name; case-sensitive |
+| `password_hash`   | yes      | Argon2id hash — see below |
+| `groups`          | yes      | List of group names this user belongs to |
+| `feed_token_hash` | no       | SHA-256 hex of the user's Atom feed token |
 
 **Groups** are plain strings. The special group `admin` bypasses all access checks and sees draft posts. All other group names must match the `access` list in a post's frontmatter for that post to be visible.
 
-### Generating a password hash
+### Managing users with manage-users
 
+The `manage-users` binary handles hashing, token generation, and file editing in one step:
+
+```bash
+# Add a user — prompts for password, generates a feed token automatically
+cargo run --bin manage-users -- add alice --groups family,friends
+
+# List all users and their groups
+cargo run --bin manage-users -- list
+
+# Change a password
+cargo run --bin manage-users -- passwd alice
+
+# Rotate the Atom feed token (prints the new token to share)
+cargo run --bin manage-users -- rotate-token alice
+
+# Remove a user
+cargo run --bin manage-users -- remove alice
 ```
+
+By default `manage-users` reads and writes `users.toml` in the current directory. Pass `--users <path>` to override. For scripted use, `--password-file <path>` reads the password from a file instead of prompting.
+
+### Low-level helpers
+
+These binaries are still available when you need them directly:
+
+```bash
+# Generate an Argon2id hash for a password
 cargo run --bin hash-password -- <password>
+
+# Mint a feed token and print both the raw token and the hash to store
+cargo run --bin generate-feed-token
 ```
-
-Paste the output into the `password_hash` field. Each call produces a different salt, which is correct — all hashes for the same password will still verify.
-
-### Resetting a password
-
-Edit `users.toml`, replace the `password_hash` value with a new hash, and restart the server. There is no self-service reset.
 
 ## Post format
 
@@ -162,29 +187,17 @@ Each user can have a private Atom feed personalised to their access groups. Feed
 
 ### Setting up a feed for a user
 
-**1. Generate a token:**
+A feed token is generated automatically when you add a user with `manage-users add`. The token is printed once — copy it before the prompt closes:
 
 ```
-cargo run --bin generate-feed-token
+$ cargo run --bin manage-users -- add alice --groups family
+Password: ········
+Confirm password: ········
+Added user 'alice'.
+Feed token (share with user): 3f8a1c0e...
 ```
 
-Output:
-```
-Token (use in feed URL):   3f8a1c0e...
-Hash  (add to users.toml): d4e2f9b7...
-```
-
-**2. Add the hash to `users.toml`:**
-
-```toml
-[[users]]
-username = "alice"
-password_hash = "..."
-groups = ["family"]
-feed_token_hash = "d4e2f9b7..."
-```
-
-Restart the server (or wait for hot reload). The feed is now live at:
+The feed is live at:
 
 ```
 https://yoursite.com/feed/3f8a1c0e....xml
@@ -192,9 +205,13 @@ https://yoursite.com/feed/3f8a1c0e....xml
 
 Share this URL with the user. The feed contains only posts their groups can see.
 
-### Revoking a feed token
+### Revoking or rotating a feed token
 
-Replace `feed_token_hash` with a new value from `generate-feed-token` (or delete the field to disable the feed entirely) and restart.
+```bash
+cargo run --bin manage-users -- rotate-token alice
+```
+
+This replaces `feed_token_hash` in `users.toml` and prints the new token. The old token stops working immediately on the next hot reload. To disable the feed entirely, remove `feed_token_hash` from the user's entry by hand.
 
 ### Security notes
 
@@ -210,5 +227,6 @@ Replace `feed_token_hash` with a new value from `generate-feed-token` (or delete
 | `cargo run` | Start the server |
 | `cargo clippy` | Lint (must be clean before committing) |
 | `cargo test` | Run the test suite |
-| `cargo run --bin hash-password -- <pw>` | Generate an argon2 hash for users.toml |
-| `cargo run --bin generate-feed-token` | Mint a new Atom feed token for a user |
+| `cargo run --bin manage-users -- <subcommand>` | Add/remove/passwd/rotate-token/list users |
+| `cargo run --bin hash-password -- <pw>` | Low-level: generate an Argon2id hash |
+| `cargo run --bin generate-feed-token` | Low-level: mint a new Atom feed token |

@@ -26,6 +26,15 @@ cargo test <test_name>
 # Run tests for a specific module
 cargo test content::tests
 
+# Manage users.toml (add/remove/passwd/rotate-token/list)
+cargo run --bin manage-users -- --help
+cargo run --bin manage-users -- add <username> --groups family,admin
+cargo run --bin manage-users -- remove <username>
+cargo run --bin manage-users -- passwd <username>
+cargo run --bin manage-users -- rotate-token <username>
+cargo run --bin manage-users -- list
+
+# Low-level helpers (still available)
 # Generate a password hash for users.toml
 cargo run --bin hash-password -- <password>
 
