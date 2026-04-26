@@ -290,11 +290,9 @@ main {
 }
 
 .gallery-heading {
-  font-size: 0.75rem;
+  font-size: 1.5rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-muted);
+  color: var(--color-text);
   margin-bottom: 0.75rem;
 }
 
