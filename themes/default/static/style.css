@@ -69,7 +69,8 @@ a {
   color: var(--color-muted);
 }
 
-.nav-link:hover {
+a.nav-link:hover,
+.nav-link--button:hover {
   color: var(--color-text);
 }
 

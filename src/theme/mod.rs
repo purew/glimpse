@@ -74,7 +74,7 @@ impl Theme {
             .collect();
         posts.reverse();
 
-        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title, style_version => &self.style_version })
+        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "index.html",
                 source: e,
@@ -99,7 +99,7 @@ impl Theme {
             })?;
 
         let ctx = PostDetailCtx::from_post(post);
-        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title, style_version => &self.style_version })
+        tmpl.render(context! { post => ctx, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "post.html",
                 source: e,

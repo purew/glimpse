@@ -68,8 +68,10 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
 
 fn viewer_from_jar(jar: &PrivateCookieJar, users: &Users) -> Viewer {
     let username = jar.get(SESSION_USER_KEY).map(|c| c.value().to_owned());
-    match username.as_deref().and_then(|u| users.get(u)) {
-        Some(user) => Viewer::with_groups(user.groups.iter().cloned()),
+    match username.and_then(|u| users.get(&u).map(|user| (u, user))) {
+        Some((name, user)) => {
+            Viewer::with_groups_and_username(user.groups.iter().cloned(), name)
+        }
         None => Viewer::public(),
     }
 }

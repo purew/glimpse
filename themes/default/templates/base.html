@@ -16,6 +16,7 @@
       </form>
       {% endif %}
       {% if logged_in %}
+      {% if username %}<span class="nav-link">{{ username }}</span>{% endif %}
       <form method="post" action="/logout">
         <button type="submit" class="nav-link nav-link--button">Logout</button>
       </form>

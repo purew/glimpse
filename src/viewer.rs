@@ -7,6 +7,7 @@ use crate::content::{Post, Site};
 pub struct Viewer {
     pub groups: Vec<String>,
     pub logged_in: bool,
+    pub username: Option<String>,
 }
 
 impl Viewer {
@@ -14,6 +15,7 @@ impl Viewer {
         Self {
             groups: vec!["admin".to_owned()],
             logged_in: true,
+            username: None,
         }
     }
 
@@ -21,6 +23,7 @@ impl Viewer {
         Self {
             groups: vec!["public".to_owned()],
             logged_in: false,
+            username: None,
         }
     }
 
@@ -28,6 +31,18 @@ impl Viewer {
         Self {
             groups: groups.into_iter().map(Into::into).collect(),
             logged_in: true,
+            username: None,
+        }
+    }
+
+    pub fn with_groups_and_username(
+        groups: impl IntoIterator<Item = impl Into<String>>,
+        username: String,
+    ) -> Self {
+        Self {
+            groups: groups.into_iter().map(Into::into).collect(),
+            logged_in: true,
+            username: Some(username),
         }
     }
 
