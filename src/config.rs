@@ -15,8 +15,6 @@ pub struct Config {
     pub posts_dir: PathBuf,
     /// Directory where generated image/video derivatives are cached.
     pub cache_dir: PathBuf,
-    /// Videos taller than this are skipped at load time.
-    pub video_max_height: u32,
     /// Maximum number of image derivatives generated concurrently during a reload.
     pub preprocess_concurrency: usize,
 }
@@ -28,7 +26,6 @@ impl Default for Config {
             site_title: "Glimpse".to_owned(),
             posts_dir: PathBuf::from("posts"),
             cache_dir: PathBuf::from("cache"),
-            video_max_height: 1080,
             preprocess_concurrency: 2,
         }
     }

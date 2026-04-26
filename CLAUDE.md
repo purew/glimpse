@@ -63,7 +63,6 @@ listen = "127.0.0.1:3000"
 site_title = "Glimpse"
 posts_dir = "posts"
 cache_dir = "cache"
-video_max_height = 1080   # videos taller than this are skipped at load time
 preprocess_concurrency = 2
 ```
 
@@ -106,7 +105,7 @@ posts/
 
 Frontmatter fields: `title` (string), `date` (YYYY-MM-DD), `access` (list of group names; omit for draft), `cover` (optional relative path to cover image).
 
-Media items include photos (jpg, png, webp, gif) and videos (mp4, mov, webm). Videos taller than `video_max_height` are skipped. Each `MediaItem` carries an `is_video` flag used by templates to render `<video>` vs `<img>` elements.
+Media items include photos (jpg, png, webp, gif) and videos (mp4, mov, webm). Videos are only included if their filename contains `web-optimized`. Each `MediaItem` carries an `is_video` flag used by templates to render `<video>` vs `<img>` elements.
 
 Folder name is the slug source: `"2025-03-18 Hawaii"` → `"2025-03-18-hawaii"`.
 

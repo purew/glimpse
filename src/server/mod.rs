@@ -291,7 +291,7 @@ async fn admin_reload_handler(
     if !viewer.is_admin() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match content::load_site(&state.posts_dir, &state.cfg) {
+    match content::load_site(&state.posts_dir) {
         Ok(site) => {
             state.site.store(Arc::new(site));
             Redirect::to("/").into_response()

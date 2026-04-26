@@ -78,7 +78,6 @@ listen        = "127.0.0.1:3000"  # address and port to bind
 site_title    = "Glimpse"         # shown in browser tab and page header
 posts_dir     = "posts"           # directory containing post subdirectories
 cache_dir     = "cache"           # directory for generated image/video derivatives
-video_max_height     = 1080       # videos taller than this are skipped at load time
 preprocess_concurrency = 2        # max concurrent derivative generation during reload
 ```
 

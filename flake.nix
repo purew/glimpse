@@ -78,7 +78,6 @@
             site_title = cfg.siteTitle;
             posts_dir = cfg.postsDir;
             cache_dir = cfg.cacheDir;
-            video_max_height = cfg.videoMaxHeight;
             preprocess_concurrency = cfg.preprocessConcurrency;
           };
         in
@@ -138,12 +137,6 @@
               type = lib.types.str;
               default = "Glimpse";
               description = "Title shown in the browser tab and page header.";
-            };
-
-            videoMaxHeight = lib.mkOption {
-              type = lib.types.ints.positive;
-              default = 1080;
-              description = "Videos taller than this are skipped at load time.";
             };
 
             preprocessConcurrency = lib.mkOption {

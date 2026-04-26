@@ -99,7 +99,7 @@ fn run(
         let mut changed: Vec<Post> = Vec::new();
         for post_dir in &affected {
             if post_dir.is_dir() {
-                match content::parse_post(post_dir, cfg) {
+                match content::parse_post(post_dir) {
                     Ok(post) => {
                         info!(slug = %post.slug, "reloaded post");
                         changed.push(post);

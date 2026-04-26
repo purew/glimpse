@@ -221,58 +221,10 @@ fn is_nsfw(path: &Path) -> bool {
         .is_some_and(|n| n.to_lowercase().contains("nsfw"))
 }
 
-/// Query the height in pixels of the first video stream via `ffprobe`.
-///
-/// Returns `None` when ffprobe is not installed or fails to read the file.
-fn video_height(path: &Path) -> Option<u32> {
-    let output = std::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=height",
-            "-of",
-            "csv=s=x:p=0",
-        ])
-        .arg(path)
-        .output()
-        .ok()?;
-    std::str::from_utf8(&output.stdout)
-        .ok()?
-        .trim()
-        .lines()
-        .next()?
-        .trim()
-        .parse()
-        .ok()
-}
-
-/// Returns `true` if the video should be included (height ≤ `max_height`).
-///
-/// Videos above the limit are skipped and a warning is logged. If ffprobe is
-/// unavailable the file is included with a warning.
-fn video_within_max_height(path: &Path, max_height: u32) -> bool {
-    match video_height(path) {
-        Some(h) if h > max_height => {
-            warn!(
-                path = %path.display(),
-                height = h,
-                max_height,
-                "skipping video exceeding max height"
-            );
-            false
-        }
-        Some(_) => true,
-        None => {
-            warn!(
-                path = %path.display(),
-                "could not determine video resolution via ffprobe; including anyway"
-            );
-            true
-        }
-    }
+fn is_web_optimized(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.contains("web-optimized"))
 }
 
 fn gcd(mut a: u32, mut b: u32) -> u32 {
@@ -430,7 +382,7 @@ fn read_exif(path: &Path) -> Option<ExifData> {
     Some(ExifData { datetime, camera, lens, aperture, shutter, iso, focal_length })
 }
 
-fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, ContentError> {
+fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
         source: e,
@@ -443,7 +395,11 @@ fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, Co
                 info!(path = %p.display(), "skipping nsfw media file");
                 return false;
             }
-            is_photo(p) || (is_video(p) && video_within_max_height(p, max_video_height))
+            if is_video(p) && is_web_optimized(p) {
+                info!(path = %p.display(), "ingesting web-optimized video");
+                return true;
+            }
+            is_photo(p)
         })
         .map(|p| {
             let is_video = is_video(&p);
@@ -455,10 +411,7 @@ fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, Co
     Ok(items)
 }
 
-fn discover_photo_groups(
-    post_dir: &Path,
-    max_video_height: u32,
-) -> Result<Vec<PhotoGroup>, ContentError> {
+fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(post_dir)
         .map_err(|e| ContentError::Io {
             path: post_dir.to_owned(),
@@ -475,7 +428,7 @@ fn discover_photo_groups(
         let path = entry.path();
         if path.is_dir() {
             let folder_name = entry.file_name().to_string_lossy().into_owned();
-            let media = collect_media(&path, max_video_height)?;
+            let media = collect_media(&path)?;
             let (title_override, body_html) = parse_section(&path).unwrap_or((None, None));
             let name = title_override.unwrap_or(folder_name);
             if !media.is_empty() || body_html.is_some() {
@@ -483,10 +436,12 @@ fn discover_photo_groups(
             }
         } else if is_nsfw(&path) {
             info!(path = %path.display(), "skipping nsfw media file");
-        } else if is_photo(&path) || (is_video(&path) && video_within_max_height(&path, max_video_height)) {
-            let is_video = is_video(&path);
-            let exif = if is_video { None } else { read_exif(&path) };
-            flat_media.push(MediaItem { path, is_video, exif });
+        } else if is_video(&path) && is_web_optimized(&path) {
+            info!(path = %path.display(), "ingesting web-optimized video");
+            flat_media.push(MediaItem { path, is_video: true, exif: None });
+        } else if is_photo(&path) {
+            let exif = read_exif(&path);
+            flat_media.push(MediaItem { path, is_video: false, exif });
         }
     }
 
@@ -502,7 +457,7 @@ fn discover_photo_groups(
     Ok(groups)
 }
 
-pub fn parse_post(post_dir: &Path, cfg: &crate::config::Config) -> Result<Post, ContentError> {
+pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
     let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
         path: index_path.clone(),
@@ -527,7 +482,7 @@ pub fn parse_post(post_dir: &Path, cfg: &crate::config::Config) -> Result<Post, 
         .unwrap_or_default();
     let slug = slug_from_dir_name(&dir_name);
     let body_html = render_markdown(body);
-    let photo_groups = discover_photo_groups(post_dir, cfg.video_max_height)?;
+    let photo_groups = discover_photo_groups(post_dir)?;
     let cover = fm.cover.map(|c| {
         // Search discovered media for a file whose name matches `c`, so the
         // frontmatter value only needs to be the filename regardless of which
@@ -566,7 +521,7 @@ pub fn parse_post(post_dir: &Path, cfg: &crate::config::Config) -> Result<Post, 
 /// # Errors
 ///
 /// Returns [`ContentError`] if any post directory cannot be read or parsed.
-pub fn load_site(posts_dir: &Path, cfg: &crate::config::Config) -> Result<Site, ContentError> {
+pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
         .map_err(|e| ContentError::Io {
             path: posts_dir.to_owned(),
@@ -579,7 +534,7 @@ pub fn load_site(posts_dir: &Path, cfg: &crate::config::Config) -> Result<Site, 
 
     let mut posts = Vec::with_capacity(entries.len());
     for entry in entries {
-        posts.push(parse_post(&entry.path(), cfg)?);
+        posts.push(parse_post(&entry.path())?);
     }
     posts.sort_by(|a, b| a.date.cmp(&b.date));
 
@@ -669,10 +624,6 @@ mod tests {
 
     // ── Integration tests ─────────────────────────────────────────────────────
 
-    fn default_cfg() -> crate::config::Config {
-        crate::config::Config::default()
-    }
-
     #[test]
     fn parse_post_published() {
         let tmp = TempDir::new().unwrap();
@@ -683,7 +634,7 @@ mod tests {
             "## Day 1\n\nWe arrived.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), &default_cfg()).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
 
         assert_eq!(post.slug, "2025-03-18-hawaii");
         assert_eq!(post.title, "Hawaii Trip");
@@ -703,7 +654,7 @@ mod tests {
             "Work in progress.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-05-01 Draft"), &default_cfg()).unwrap();
+        let post = parse_post(&tmp.path().join("2025-05-01 Draft")).unwrap();
 
         assert!(post.is_draft());
         assert!(post.access.is_empty());
@@ -723,7 +674,7 @@ mod tests {
         make_photo(&post_dir.join("2025-03-18 Travel day"), "b.jpg");
         make_photo(&post_dir.join("2025-03-19 Hiking"), "c.jpg");
 
-        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+        let post = parse_post(&post_dir).unwrap();
 
         assert_eq!(post.photo_groups.len(), 2);
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
@@ -745,7 +696,7 @@ mod tests {
         make_photo(&post_dir, "photo1.jpg");
         make_photo(&post_dir, "photo2.jpg");
 
-        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+        let post = parse_post(&post_dir).unwrap();
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "");
@@ -770,7 +721,7 @@ mod tests {
         )
         .unwrap();
 
-        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+        let post = parse_post(&post_dir).unwrap();
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "Travel Day");
@@ -795,7 +746,7 @@ mod tests {
         )
         .unwrap();
 
-        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+        let post = parse_post(&post_dir).unwrap();
 
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
         assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("Just a body"));
@@ -811,7 +762,7 @@ mod tests {
             "",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), &default_cfg()).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
 
         assert!(post.photo_groups.is_empty());
     }
@@ -832,7 +783,7 @@ mod tests {
             "",
         );
 
-        let site = load_site(tmp.path(), &default_cfg()).unwrap();
+        let site = load_site(tmp.path()).unwrap();
 
         assert_eq!(site.posts.len(), 2);
         assert_eq!(site.posts[0].date, "2025-01-01");
@@ -856,7 +807,7 @@ mod tests {
         make_photo(&post_dir.join("Day 1"), "safe2.jpg");
         make_photo(&post_dir.join("Day 1"), "day1-NSFW.jpg");
 
-        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+        let post = parse_post(&post_dir).unwrap();
 
         let flat = post.photo_groups.iter().find(|g| g.name.is_empty()).unwrap();
         assert_eq!(flat.media.len(), 1);
@@ -870,7 +821,7 @@ mod tests {
     #[test]
     fn load_site_empty_directory() {
         let tmp = TempDir::new().unwrap();
-        let site = load_site(tmp.path(), &default_cfg()).unwrap();
+        let site = load_site(tmp.path()).unwrap();
         assert!(site.posts.is_empty());
     }
 }
