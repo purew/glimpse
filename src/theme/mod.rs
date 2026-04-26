@@ -69,9 +69,10 @@ impl Theme {
                 source: e,
             })?;
 
-        let posts: Vec<PostSummaryCtx> = visible(site, viewer)
+        let mut posts: Vec<PostSummaryCtx> = visible(site, viewer)
             .map(PostSummaryCtx::from_post)
             .collect();
+        posts.reverse();
 
         tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
