@@ -388,6 +388,7 @@ mod tests {
             body_html: String::new(),
             photo_groups: vec![PhotoGroup {
                 name: String::new(),
+                body_html: None,
                 media: vec![MediaItem { path: source_dir.join("img.jpg"), is_video: false }],
             }],
             source_dir: source_dir.to_owned(),

@@ -24,6 +24,11 @@
     {% if group.name %}
     <h2 class="gallery-heading">{{ group.name }}</h2>
     {% endif %}
+    {% if group.body_html %}
+    <div class="post-body">
+      {{ group.body_html|safe }}
+    </div>
+    {% endif %}
     <div class="gallery">
       {% for item in group.media %}
       {% if item.is_video %}

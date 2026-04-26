@@ -208,6 +208,9 @@ fn entry_content_html(post: &Post, base_url: &str, token: &str) -> String {
         if !group.name.is_empty() {
             html.push_str(&format!("<h2>{}</h2>\n", group.name));
         }
+        if let Some(body) = &group.body_html {
+            html.push_str(body);
+        }
         for item in &group.media {
             if item.is_video {
                 continue;
@@ -328,6 +331,7 @@ impl PostSummaryCtx {
 #[derive(Debug, Serialize)]
 struct PhotoGroupCtx {
     name: String,
+    body_html: Option<String>,
     media: Vec<MediaCtx>,
 }
 
@@ -359,6 +363,7 @@ impl PostDetailCtx {
                     .collect();
                 PhotoGroupCtx {
                     name: group.name.clone(),
+                    body_html: group.body_html.clone(),
                     media,
                 }
             })
@@ -411,6 +416,7 @@ mod tests {
             body_html: String::new(),
             photo_groups: vec![PhotoGroup {
                 name: "Day 1".into(),
+                body_html: None,
                 media: vec![
                     MediaItem { path: day1_dir.join("a.jpg"), is_video: false },
                     MediaItem { path: day1_dir.join("b.jpg"), is_video: false },

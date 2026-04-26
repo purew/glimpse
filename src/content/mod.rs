@@ -43,8 +43,10 @@ pub struct MediaItem {
 /// A group of media from one subfolder (subfolder name becomes a section heading).
 #[derive(Debug, Clone)]
 pub struct PhotoGroup {
-    /// Subfolder name; empty string when media is flat under `photos/`.
+    /// Display name: frontmatter title if present, else subfolder name; empty string for flat media.
     pub name: String,
+    /// Pre-rendered HTML from a section `index.md`, if one exists in the subfolder.
+    pub body_html: Option<String>,
     pub media: Vec<MediaItem>,
 }
 
@@ -89,6 +91,12 @@ struct Frontmatter {
     cover: Option<String>,
 }
 
+/// Optional frontmatter for a section `index.md` inside a post subfolder.
+#[derive(Debug, Deserialize, Default)]
+struct SectionFrontmatter {
+    title: Option<String>,
+}
+
 /// Split `---\n<yaml>\n---\n<body>` into (yaml_str, body_str).
 fn split_frontmatter<'a>(
     content: &'a str,
@@ -115,6 +123,31 @@ fn render_markdown(markdown: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
     html_output
+}
+
+/// Parse a section `index.md` in `dir`, returning `(title_override, body_html)`.
+///
+/// Returns `None` when no `index.md` exists. Frontmatter is optional; if absent
+/// the entire file is treated as the Markdown body.
+fn parse_section(dir: &Path) -> Option<(Option<String>, Option<String>)> {
+    let index_path = dir.join("index.md");
+    let content = std::fs::read_to_string(&index_path).ok()?;
+
+    let (title, body_html) = match split_frontmatter(&content, &index_path) {
+        Ok((yaml, body)) => {
+            let title = serde_yaml::from_str::<SectionFrontmatter>(yaml)
+                .ok()
+                .and_then(|fm| fm.title);
+            let body_html = if body.trim().is_empty() { None } else { Some(render_markdown(body)) };
+            (title, body_html)
+        }
+        Err(_) => {
+            let body_html = if content.trim().is_empty() { None } else { Some(render_markdown(&content)) };
+            (None, body_html)
+        }
+    };
+
+    Some((title, body_html))
 }
 
 /// Convert a folder name like `"2025-03-18 Hawaii"` to `"2025-03-18-hawaii"`.
@@ -250,10 +283,12 @@ fn discover_photo_groups(
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let folder_name = entry.file_name().to_string_lossy().into_owned();
             let media = collect_media(&path, max_video_height)?;
-            if !media.is_empty() {
-                groups.push(PhotoGroup { name, media });
+            let (title_override, body_html) = parse_section(&path).unwrap_or((None, None));
+            let name = title_override.unwrap_or(folder_name);
+            if !media.is_empty() || body_html.is_some() {
+                groups.push(PhotoGroup { name, body_html, media });
             }
         } else if is_photo(&path) || (is_video(&path) && video_within_max_height(&path, max_video_height)) {
             let is_video = is_video(&path);
@@ -265,6 +300,7 @@ fn discover_photo_groups(
         flat_media.sort_by(|a, b| a.path.cmp(&b.path));
         groups.insert(0, PhotoGroup {
             name: String::new(),
+            body_html: None,
             media: flat_media,
         });
     }
@@ -520,6 +556,55 @@ mod tests {
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "");
         assert_eq!(post.photo_groups[0].media.len(), 2);
+    }
+
+    #[test]
+    fn parse_post_section_index_md_provides_body_and_title() {
+        let tmp = TempDir::new().unwrap();
+        let post_dir = tmp.path().join("2025-03-18 Hawaii");
+        make_post(
+            &tmp,
+            "2025-03-18 Hawaii",
+            "title: Hawaii\ndate: \"2025-03-18\"",
+            "",
+        );
+        let section_dir = post_dir.join("2025-03-18 Travel day");
+        make_photo(&section_dir, "a.jpg");
+        fs::write(
+            section_dir.join("index.md"),
+            "---\ntitle: Travel Day\n---\nWe flew in.\n",
+        )
+        .unwrap();
+
+        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+
+        assert_eq!(post.photo_groups.len(), 1);
+        assert_eq!(post.photo_groups[0].name, "Travel Day");
+        assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("We flew in."));
+    }
+
+    #[test]
+    fn parse_post_section_index_md_title_falls_back_to_folder_name() {
+        let tmp = TempDir::new().unwrap();
+        let post_dir = tmp.path().join("2025-03-18 Hawaii");
+        make_post(
+            &tmp,
+            "2025-03-18 Hawaii",
+            "title: Hawaii\ndate: \"2025-03-18\"",
+            "",
+        );
+        let section_dir = post_dir.join("2025-03-18 Travel day");
+        make_photo(&section_dir, "a.jpg");
+        fs::write(
+            section_dir.join("index.md"),
+            "---\n---\nJust a body, no title.\n",
+        )
+        .unwrap();
+
+        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+
+        assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
+        assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("Just a body"));
     }
 
     #[test]

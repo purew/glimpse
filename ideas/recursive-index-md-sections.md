@@ -29,3 +29,7 @@ posts/
 
 - `content` — scan for nested `index.md` during post load; attach parsed body to `PhotoGroup`.
 - `theme` — render section title + body above each `PhotoGroupCtx` in `post.html`.
+
+## Status
+
+Implemented in commit on 2026-04-25.
