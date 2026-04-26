@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use pulldown_cmark::{Options, Parser, html};
 use serde::Deserialize;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{info, warn};
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +192,12 @@ fn is_video(path: &Path) -> bool {
     )
 }
 
+fn is_nsfw(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.to_lowercase().contains("nsfw"))
+}
+
 /// Query the height in pixels of the first video stream via `ffprobe`.
 ///
 /// Returns `None` when ffprobe is not installed or fails to read the file.
@@ -254,7 +260,13 @@ fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, Co
     let mut items: Vec<MediaItem> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| is_photo(p) || (is_video(p) && video_within_max_height(p, max_video_height)))
+        .filter(|p| {
+            if is_nsfw(p) {
+                info!(path = %p.display(), "skipping nsfw media file");
+                return false;
+            }
+            is_photo(p) || (is_video(p) && video_within_max_height(p, max_video_height))
+        })
         .map(|p| {
             let is_video = is_video(&p);
             MediaItem { path: p, is_video }
@@ -290,6 +302,8 @@ fn discover_photo_groups(
             if !media.is_empty() || body_html.is_some() {
                 groups.push(PhotoGroup { name, body_html, media });
             }
+        } else if is_nsfw(&path) {
+            info!(path = %path.display(), "skipping nsfw media file");
         } else if is_photo(&path) || (is_video(&path) && video_within_max_height(&path, max_video_height)) {
             let is_video = is_video(&path);
             flat_media.push(MediaItem { path, is_video });
@@ -643,6 +657,34 @@ mod tests {
         assert_eq!(site.posts.len(), 2);
         assert_eq!(site.posts[0].date, "2025-01-01");
         assert_eq!(site.posts[1].date, "2025-06-01");
+    }
+
+    #[test]
+    fn nsfw_files_are_excluded_from_flat_and_subfolder_media() {
+        let tmp = TempDir::new().unwrap();
+        let post_dir = tmp.path().join("2025-03-18 Hawaii");
+        make_post(
+            &tmp,
+            "2025-03-18 Hawaii",
+            "title: Hawaii\ndate: \"2025-03-18\"",
+            "",
+        );
+        // Flat layout: one safe photo, one nsfw photo
+        make_photo(&post_dir, "safe.jpg");
+        make_photo(&post_dir, "nsfw_private.jpg");
+        // Subfolder layout: one safe photo, one nsfw photo
+        make_photo(&post_dir.join("Day 1"), "safe2.jpg");
+        make_photo(&post_dir.join("Day 1"), "day1-NSFW.jpg");
+
+        let post = parse_post(&post_dir, &default_cfg()).unwrap();
+
+        let flat = post.photo_groups.iter().find(|g| g.name.is_empty()).unwrap();
+        assert_eq!(flat.media.len(), 1);
+        assert!(flat.media[0].path.file_name().unwrap() == "safe.jpg");
+
+        let day1 = post.photo_groups.iter().find(|g| g.name == "Day 1").unwrap();
+        assert_eq!(day1.media.len(), 1);
+        assert!(day1.media[0].path.file_name().unwrap() == "safe2.jpg");
     }
 
     #[test]
