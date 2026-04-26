@@ -17,6 +17,9 @@ cargo build
 # Run (requires GLIMPSE_SESSION_SECRET env var — see Runtime requirements below)
 cargo run
 
+# Lint (must be clean before committing)
+cargo clippy
+
 # Run all tests
 cargo test
 
@@ -51,7 +54,20 @@ export GLIMPSE_SESSION_SECRET=$(openssl rand -hex 64)
 cargo run
 ```
 
-It also reads `users.toml` (missing file is non-fatal, not an error) and `posts/` at startup.
+It also reads `glimpse.toml` (optional config), `users.toml` (missing file is non-fatal), and `posts/` at startup.
+
+`glimpse.toml` fields (all optional; these are the defaults):
+
+```toml
+listen = "127.0.0.1:3000"
+site_title = "Glimpse"
+posts_dir = "posts"
+cache_dir = "cache"
+video_max_height = 1080   # videos taller than this are skipped at load time
+preprocess_concurrency = 2
+```
+
+Override the theme directory (default `themes/default`) with the `GLIMPSE_THEME_DIR` env var.
 
 ## Linting
 
@@ -73,7 +89,8 @@ content  →  viewer  →  theme  →  server
 - **`media`** — Derivative image generation. `MediaCache::ensure(source, size)` checks for a cached JPEG derivative keyed by `hash(path, mtime, size)` and generates one on a blocking thread if absent. Cache lives in `cache/`. EXIF orientation is corrected before resizing; no upscaling.
 - **`watcher`** — Hot reload. Background thread watching `posts/` via `notify`. On change: debounce 300 ms → rebuild `Site` → pre-generate all derivatives (concurrency capped at 2) → atomically swap via `ArcSwap`. Errors leave the previous `Site` live.
 - **`users`** — User registry loaded from `users.toml`. Passwords verified with Argon2id. Feed tokens stored as SHA-256 hashes.
-- **`server`** — Axum router. `AppState { site, theme, media_cache, users, cookie_key }` held in `Arc`.
+- **`config`** — Loads `glimpse.toml` (missing is non-fatal). Produces `Config` passed as `Arc<Config>` through `AppState` and `watcher`.
+- **`server`** — Axum router. `AppState { site, theme, media_cache, users, cookie_key, cfg }` held in `Arc`.
 
 ### Post directory layout
 
@@ -88,6 +105,8 @@ posts/
 ```
 
 Frontmatter fields: `title` (string), `date` (YYYY-MM-DD), `access` (list of group names; omit for draft), `cover` (optional relative path to cover image).
+
+Media items include photos (jpg, png, webp, gif) and videos (mp4, mov, webm). Videos taller than `video_max_height` are skipped. Each `MediaItem` carries an `is_video` flag used by templates to render `<video>` vs `<img>` elements.
 
 Folder name is the slug source: `"2025-03-18 Hawaii"` → `"2025-03-18-hawaii"`.
 
@@ -125,9 +144,12 @@ feed_token_hash = "<sha256 hex from generate-feed-token binary>"  # optional
 | GET | `/login` | Login form |
 | POST | `/login` | Authenticate; sets session cookie |
 | POST | `/logout` | Clears session cookie |
+| POST | `/admin/reload` | Force-reload site from disk; requires `admin` session |
 | GET | `/static/*` | Theme assets (CSS, fonts) |
 
 The media route also accepts `?t={feed_token}` to authenticate feed readers that cannot send cookies (for image embeds inside Atom entries).
+
+The feed route accepts an optional `.xml` suffix (`/feed/{token}.xml`) for compatibility with feed readers that expect a file extension; the suffix is stripped before token lookup.
 
 ### Media URL scheme
 
