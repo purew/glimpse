@@ -12,13 +12,12 @@ Currently a post is a single flat narrative (`index.md` at root) with photos gro
 posts/
   2025-03-18 Hawaii/
     index.md              # post root — title, date, access, cover
-    photos/
-      2025-03-18 Travel day/
-        index.md          # section — own Markdown body
-        *.jpg
-      2025-03-19 Manoa Falls/
-        index.md          # section — own Markdown body
-        *.jpg
+    2025-03-18 Travel day/
+      index.md          # section — own Markdown body
+      *.jpg
+    2025-03-19 Manoa Falls/
+      index.md          # section — own Markdown body
+      *.jpg
 ```
 
 - Each subfolder `index.md` renders as a section within the parent post page.
