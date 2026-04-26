@@ -255,6 +255,24 @@ fn hash_file(path: &Path) -> String {
 // These structs translate the domain model into template-friendly values. Paths
 // become URL strings, counts are computed here so templates stay logic-free.
 
+/// Strips leading words from `lens` that already appear (case-insensitively) in `camera`,
+/// then returns `"camera · remaining_lens"` (or just `camera` if nothing remains).
+fn combine_camera_lens(camera: &str, lens: &str) -> String {
+    let camera_words: std::collections::HashSet<String> =
+        camera.split_whitespace().map(|w| w.to_lowercase()).collect();
+    let lens_words: Vec<&str> = lens.split_whitespace().collect();
+    let skip = lens_words
+        .iter()
+        .take_while(|w| camera_words.contains(&w.to_lowercase()))
+        .count();
+    let remainder = lens_words[skip..].join(" ");
+    if remainder.is_empty() {
+        camera.to_owned()
+    } else {
+        format!("{camera} · {remainder}")
+    }
+}
+
 fn media_url(slug: &str, source_dir: &Path, path: &Path) -> String {
     let rel = path.strip_prefix(source_dir).unwrap_or(path);
     format!("/media/{}/{}", slug, rel.display())
@@ -268,17 +286,54 @@ struct MediaCtx {
     /// `?size=medium` derivative URL; empty for videos.
     medium: String,
     is_video: bool,
+    /// Focal length · aperture · shutter · ISO, e.g. `"50mm · f/2.8 · 1/250s · ISO 400"`.
+    exif_tech: Option<String>,
+    /// Camera + deduplicated lens on one line, e.g. `"Nikon Z6_3 · Nikkor Z 50mm f/1.8 S"`.
+    exif_camera_lens: Option<String>,
+    /// Formatted capture datetime, e.g. `"2025-03-18 14:32"`.
+    exif_datetime: Option<String>,
 }
 
 impl MediaCtx {
     fn from_item(slug: &str, source_dir: &Path, item: &MediaItem) -> Self {
         let url = media_url(slug, source_dir, &item.path);
         if item.is_video {
-            Self { url, thumb: String::new(), medium: String::new(), is_video: true }
+            Self {
+                url,
+                thumb: String::new(),
+                medium: String::new(),
+                is_video: true,
+                exif_tech: None,
+                exif_camera_lens: None,
+                exif_datetime: None,
+            }
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
-            Self { url, thumb, medium, is_video: false }
+            let exif = item.exif.as_ref();
+            let exif_tech = exif.and_then(|e| {
+                let parts: Vec<&str> = [
+                    e.focal_length.as_deref(),
+                    e.aperture.as_deref(),
+                    e.shutter.as_deref(),
+                    e.iso.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+            });
+            let exif_camera_lens = match (
+                exif.and_then(|e| e.camera.as_deref()),
+                exif.and_then(|e| e.lens.as_deref()),
+            ) {
+                (Some(cam), Some(lens)) => Some(combine_camera_lens(cam, lens)),
+                (Some(cam), None) => Some(cam.to_owned()),
+                (None, Some(lens)) => Some(lens.to_owned()),
+                (None, None) => None,
+            };
+            let exif_datetime = exif.and_then(|e| e.datetime.clone());
+            Self { url, thumb, medium, is_video: false, exif_tech, exif_camera_lens, exif_datetime }
         }
     }
 
@@ -286,7 +341,15 @@ impl MediaCtx {
         let url = media_url(slug, source_dir, path);
         let thumb = format!("{url}?size=thumb");
         let medium = format!("{url}?size=medium");
-        Self { url, thumb, medium, is_video: false }
+        Self {
+            url,
+            thumb,
+            medium,
+            is_video: false,
+            exif_tech: None,
+            exif_camera_lens: None,
+            exif_datetime: None,
+        }
     }
 }
 
@@ -419,8 +482,8 @@ mod tests {
                 name: "Day 1".into(),
                 body_html: None,
                 media: vec![
-                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false },
-                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false },
+                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false, exif: None },
+                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false, exif: None },
                 ],
             }],
             source_dir,

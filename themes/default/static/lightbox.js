@@ -7,12 +7,20 @@
     '<button class="lightbox-close">close</button>' +
     '</div>' +
     '<button class="lightbox-prev" aria-label="Previous">‹</button>' +
+    '<div class="lightbox-inner">' +
     '<img class="lightbox-img" alt="">' +
+    '<div class="lightbox-exif">' +
+    '<span class="lightbox-exif-time"></span>' +
+    '<span class="lightbox-exif-meta"></span>' +
+    '</div>' +
+    '</div>' +
     '<button class="lightbox-next" aria-label="Next">›</button>';
   document.body.appendChild(lb);
 
   var img = lb.querySelector('.lightbox-img');
   var original = lb.querySelector('.lightbox-original');
+  var exifMeta = lb.querySelector('.lightbox-exif-meta');
+  var exifTime = lb.querySelector('.lightbox-exif-time');
   var items = [];
   var idx = 0;
 
@@ -20,6 +28,13 @@
     idx = (i + items.length) % items.length;
     img.src = items[idx].dataset.medium || items[idx].href;
     original.href = items[idx].href;
+
+    var cameraLens = items[idx].dataset.exifCameraLens || '';
+    var tech = items[idx].dataset.exifTech || '';
+    exifMeta.textContent = [cameraLens, tech].filter(Boolean).join(' · ');
+    var datetime = items[idx].dataset.exifDatetime || '';
+    exifTime.textContent = datetime ? 'Photo taken: ' + datetime : '';
+
     lb.classList.add('is-open');
     document.body.style.overflow = 'hidden';
   }

@@ -2,8 +2,10 @@
 //!
 //! Pure module — no HTTP, no HTML templating.
 
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use exif::{In, Reader as ExifReader, Tag};
 use pulldown_cmark::{Options, Parser, html};
 use serde::Deserialize;
 use thiserror::Error;
@@ -33,11 +35,32 @@ pub enum ContentError {
 
 // ── Public model ──────────────────────────────────────────────────────────────
 
+/// EXIF metadata extracted from a photo at load time.
+#[derive(Debug, Clone)]
+pub struct ExifData {
+    /// Formatted capture time, e.g. `"2025-03-18 14:32"`.
+    pub datetime: Option<String>,
+    /// Camera make + model, e.g. `"Nikon Z6_3"`.
+    pub camera: Option<String>,
+    /// Lens model, e.g. `"Nikon Nikkor Z 50mm f/1.8 S"`.
+    pub lens: Option<String>,
+    /// Aperture, e.g. `"f/2.8"`.
+    pub aperture: Option<String>,
+    /// Shutter speed, e.g. `"1/250s"`.
+    pub shutter: Option<String>,
+    /// ISO sensitivity, e.g. `"ISO 400"`.
+    pub iso: Option<String>,
+    /// Focal length, e.g. `"50mm"`.
+    pub focal_length: Option<String>,
+}
+
 /// A single media item (photo or video) within a post.
 #[derive(Debug, Clone)]
 pub struct MediaItem {
     pub path: PathBuf,
     pub is_video: bool,
+    /// `None` for videos or photos without readable EXIF.
+    pub exif: Option<ExifData>,
 }
 
 /// A group of media from one subfolder (subfolder name becomes a section heading).
@@ -252,6 +275,161 @@ fn video_within_max_height(path: &Path, max_height: u32) -> bool {
     }
 }
 
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn ascii_exif(exif: &exif::Exif, tag: Tag) -> Option<String> {
+    exif.get_field(tag, In::PRIMARY).and_then(|f| {
+        if let exif::Value::Ascii(ref v) = f.value {
+            v.first()
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .map(|s| s.trim_matches('\0').trim().to_owned())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        }
+    })
+}
+
+fn rational_exif(exif: &exif::Exif, tag: Tag) -> Option<exif::Rational> {
+    exif.get_field(tag, In::PRIMARY).and_then(|f| {
+        if let exif::Value::Rational(ref v) = f.value {
+            v.first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn format_aperture(r: exif::Rational) -> String {
+    if r.denom == 0 {
+        return String::new();
+    }
+    let value = f64::from(r.num) / f64::from(r.denom);
+    if value.fract() == 0.0 { format!("f/{value:.0}") } else { format!("f/{value:.1}") }
+}
+
+fn format_shutter(r: exif::Rational) -> String {
+    if r.denom == 0 || r.num == 0 {
+        return String::new();
+    }
+    if r.denom == 1 {
+        return format!("{}s", r.num);
+    }
+    let g = gcd(r.num, r.denom);
+    let n = r.num / g;
+    let d = r.denom / g;
+    if n == 1 { format!("1/{d}s") } else { format!("{n}/{d}s") }
+}
+
+fn title_case(s: &str) -> String {
+    s.split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_focal_length(r: exif::Rational) -> String {
+    if r.denom == 0 {
+        return String::new();
+    }
+    let mm = f64::from(r.num) / f64::from(r.denom);
+    if mm.fract() == 0.0 {
+        format!("{mm:.0}mm")
+    } else {
+        format!("{mm:.1}mm")
+    }
+}
+
+fn format_exif_datetime(raw: &str) -> String {
+    // EXIF stores "2025:03:18 14:32:00"; convert to "2025-03-18 14:32"
+    if raw.len() >= 16 {
+        let date = raw[..10].replace(':', "-");
+        format!("{date} {}", &raw[11..16])
+    } else {
+        raw.to_owned()
+    }
+}
+
+fn read_exif(path: &Path) -> Option<ExifData> {
+    let file = std::fs::File::open(path).ok()?;
+    let exif = ExifReader::new()
+        .read_from_container(&mut BufReader::new(file))
+        .ok()?;
+
+    let datetime = ascii_exif(&exif, Tag::DateTimeOriginal)
+        .or_else(|| ascii_exif(&exif, Tag::DateTime))
+        .map(|s| format_exif_datetime(&s))
+        .filter(|s| !s.is_empty());
+
+    let make = ascii_exif(&exif, Tag::Make).map(|s| title_case(&s));
+    let model = ascii_exif(&exif, Tag::Model);
+    let camera = match (make, model) {
+        (Some(mk), Some(mo)) if mo.to_uppercase().starts_with(&mk.to_uppercase()) => Some(mo),
+        (Some(mk), Some(mo)) => Some(format!("{mk} {mo}")),
+        (Some(mk), None) => Some(mk),
+        (None, Some(mo)) => Some(mo),
+        (None, None) => None,
+    };
+
+    let lens = ascii_exif(&exif, Tag::LensModel);
+
+    let aperture = rational_exif(&exif, Tag::FNumber)
+        .map(format_aperture)
+        .filter(|s| !s.is_empty());
+
+    let shutter = rational_exif(&exif, Tag::ExposureTime)
+        .map(format_shutter)
+        .filter(|s| !s.is_empty());
+
+    let iso = [Tag::PhotographicSensitivity, Tag::ISOSpeed]
+        .iter()
+        .find_map(|&tag| {
+            exif.get_field(tag, In::PRIMARY).and_then(|f| {
+                // Some cameras (e.g. Nikon Z6 III) store ISO as int32s (SLong).
+                f.value.get_uint(0).or_else(|| {
+                    if let exif::Value::SLong(ref v) = f.value {
+                        v.first().copied().and_then(|n| u32::try_from(n).ok())
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .map(|v| format!("ISO {v}"));
+
+    let focal_length = rational_exif(&exif, Tag::FocalLength)
+        .map(format_focal_length)
+        .filter(|s| !s.is_empty());
+
+    if datetime.is_none()
+        && camera.is_none()
+        && lens.is_none()
+        && aperture.is_none()
+        && shutter.is_none()
+        && iso.is_none()
+        && focal_length.is_none()
+    {
+        return None;
+    }
+
+    Some(ExifData { datetime, camera, lens, aperture, shutter, iso, focal_length })
+}
+
 fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
@@ -269,7 +447,8 @@ fn collect_media(dir: &Path, max_video_height: u32) -> Result<Vec<MediaItem>, Co
         })
         .map(|p| {
             let is_video = is_video(&p);
-            MediaItem { path: p, is_video }
+            let exif = if is_video { None } else { read_exif(&p) };
+            MediaItem { path: p, is_video, exif }
         })
         .collect();
     items.sort_by(|a, b| a.path.cmp(&b.path));
@@ -306,7 +485,8 @@ fn discover_photo_groups(
             info!(path = %path.display(), "skipping nsfw media file");
         } else if is_photo(&path) || (is_video(&path) && video_within_max_height(&path, max_video_height)) {
             let is_video = is_video(&path);
-            flat_media.push(MediaItem { path, is_video });
+            let exif = if is_video { None } else { read_exif(&path) };
+            flat_media.push(MediaItem { path, is_video, exif });
         }
     }
 

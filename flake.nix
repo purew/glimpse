@@ -181,6 +181,7 @@
 
         buildInputs = buildInputs ++ runtimeDeps ++ [
           pkgs.cargo-watch  # optional: cargo watch for development
+          pkgs.exiftool
         ];
       };
     };
