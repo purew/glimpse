@@ -2,19 +2,24 @@
   var lb = document.createElement('div');
   lb.className = 'lightbox';
   lb.innerHTML =
-    '<button class="lightbox-close" aria-label="Close">×</button>' +
+    '<div class="lightbox-toolbar">' +
+    '<a class="lightbox-original" target="_blank" rel="noopener">full resolution</a>' +
+    '<button class="lightbox-close">close</button>' +
+    '</div>' +
     '<button class="lightbox-prev" aria-label="Previous">‹</button>' +
     '<img class="lightbox-img" alt="">' +
     '<button class="lightbox-next" aria-label="Next">›</button>';
   document.body.appendChild(lb);
 
   var img = lb.querySelector('.lightbox-img');
+  var original = lb.querySelector('.lightbox-original');
   var items = [];
   var idx = 0;
 
   function open(i) {
     idx = (i + items.length) % items.length;
     img.src = items[idx].dataset.medium || items[idx].href;
+    original.href = items[idx].href;
     lb.classList.add('is-open');
     document.body.style.overflow = 'hidden';
   }
@@ -26,6 +31,7 @@
   }
 
   lb.addEventListener('click', function (e) {
+    if (e.target.classList.contains('lightbox-original')) return;
     if (e.target === lb || e.target.classList.contains('lightbox-close')) {
       close();
     } else if (e.target.classList.contains('lightbox-prev')) {

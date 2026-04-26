@@ -432,19 +432,32 @@ main {
   border-radius: 2px;
 }
 
-.lightbox-close {
+.lightbox-toolbar {
   position: absolute;
   top: 1rem;
   right: 1rem;
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.lightbox-original,
+.lightbox-close {
   color: #fff;
-  font-size: 1.75rem;
-  line-height: 1;
+  font-size: 0.9rem;
   cursor: pointer;
   background: none;
   border: none;
-  padding: 0.25rem 0.5rem;
+  padding: 0;
   opacity: 0.75;
   transition: opacity 0.15s;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lightbox-original:hover,
+.lightbox-close:hover {
+  opacity: 1;
 }
 
 .lightbox-prev,
@@ -467,7 +480,6 @@ main {
 .lightbox-prev { left: 0; }
 .lightbox-next { right: 0; }
 
-.lightbox-close:hover,
 .lightbox-prev:hover,
 .lightbox-next:hover {
   opacity: 1;
