@@ -87,7 +87,7 @@
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.default;
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
               defaultText = lib.literalExpression "glimpse-rs from this flake";
               description = "The glimpse-rs package to use.";
             };
