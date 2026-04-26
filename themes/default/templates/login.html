@@ -9,6 +9,7 @@
   <p class="login-error">{{ error }}</p>
   {% endif %}
   <form method="post" action="/login">
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
     <div class="form-group">
       <label for="username">Username</label>
       <input id="username" name="username" type="text" autocomplete="username" required>

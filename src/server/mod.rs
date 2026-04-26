@@ -23,6 +23,12 @@ use crate::theme::Theme;
 use crate::users::Users;
 use crate::viewer::{Viewer, visible};
 
+/// Returns true if `path` is a safe local redirect target:
+/// starts with `/` but not `//` (which would be protocol-relative).
+fn is_safe_redirect(path: &str) -> bool {
+    path.starts_with('/') && !path.starts_with("//")
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SESSION_USER_KEY: &str = "username";
@@ -137,6 +143,14 @@ async fn post_handler(
     let viewer = viewer_from_jar(&jar, &state.users);
     let site = state.site.load_full();
     let Some(post) = visible(&site, &viewer).find(|p| p.slug == slug) else {
+        // If the post exists, is not a draft, and the viewer is unauthenticated,
+        // redirect to the login page so they can sign in and return here.
+        let exists_but_restricted = !viewer.logged_in
+            && site.posts.iter().any(|p| p.slug == slug && !p.is_draft());
+        if exists_but_restricted {
+            let next = format!("/posts/{slug}");
+            return Redirect::to(&format!("/login?next={next}")).into_response();
+        }
         return StatusCode::NOT_FOUND.into_response();
     };
     match state.theme.render_post(post, &viewer) {
@@ -286,8 +300,17 @@ async fn admin_reload_handler(
     }
 }
 
-async fn login_get_handler(State(state): State<AppState>) -> Response {
-    match state.theme.render_login(None) {
+#[derive(Deserialize)]
+struct LoginQuery {
+    next: Option<String>,
+}
+
+async fn login_get_handler(
+    State(state): State<AppState>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
+    let next = query.next.as_deref().filter(|p| is_safe_redirect(p));
+    match state.theme.render_login(None, next) {
         Ok(html) => Html(html).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -297,6 +320,7 @@ async fn login_get_handler(State(state): State<AppState>) -> Response {
 struct LoginForm {
     username: String,
     password: String,
+    next: Option<String>,
 }
 
 async fn login_post_handler(
@@ -305,12 +329,18 @@ async fn login_post_handler(
     Form(form): Form<LoginForm>,
 ) -> Response {
     if state.users.verify(&form.username, &form.password).is_some() {
+        let destination = form
+            .next
+            .as_deref()
+            .filter(|p| is_safe_redirect(p))
+            .unwrap_or("/");
         let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
-        (updated_jar, Redirect::to("/")).into_response()
+        (updated_jar, Redirect::to(destination)).into_response()
     } else {
+        let next = form.next.as_deref().filter(|p| is_safe_redirect(p));
         match state
             .theme
-            .render_login(Some("Invalid username or password"))
+            .render_login(Some("Invalid username or password"), next)
         {
             Ok(html) => (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -539,13 +569,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_returns_404_for_group_restricted_post_without_session() {
+    async fn post_redirects_to_login_for_group_restricted_post_without_session() {
         let tmp = TempDir::new().unwrap();
         let app = build_router(test_state(
             vec![make_post("family-only", vec!["family"])],
             tmp.path().join("cache"),
         ));
         let resp = app.oneshot(get("/posts/family-only")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            resp.headers().get(header::LOCATION).unwrap(),
+            "/login?next=/posts/family-only"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_returns_404_for_draft_without_session() {
+        let tmp = TempDir::new().unwrap();
+        let app = build_router(test_state(
+            vec![make_post("wip", vec![])],
+            tmp.path().join("cache"),
+        ));
+        let resp = app.oneshot(get("/posts/wip")).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
