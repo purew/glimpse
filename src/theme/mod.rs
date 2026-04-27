@@ -301,6 +301,8 @@ struct MediaCtx {
     /// `?size=medium` derivative URL; empty for videos.
     medium: String,
     is_video: bool,
+    /// CSS `aspect-ratio` value, e.g. `"3/2"` or `"2/3"`. `None` for videos or unreadable images.
+    aspect_ratio: Option<String>,
     /// Focal length · aperture · shutter · ISO, e.g. `"50mm · f/2.8 · 1/250s · ISO 400"`.
     exif_tech: Option<String>,
     /// Camera + deduplicated lens on one line, e.g. `"Nikon Z6_3 · Nikkor Z 50mm f/1.8 S"`.
@@ -318,6 +320,7 @@ impl MediaCtx {
                 thumb: String::new(),
                 medium: String::new(),
                 is_video: true,
+                aspect_ratio: None,
                 exif_tech: None,
                 exif_camera_lens: None,
                 exif_datetime: None,
@@ -325,6 +328,7 @@ impl MediaCtx {
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
+            let aspect_ratio = item.dimensions.map(|(w, h)| format!("{w}/{h}"));
             let exif = item.exif.as_ref();
             let exif_tech = exif.and_then(|e| {
                 let parts: Vec<&str> = [
@@ -348,7 +352,7 @@ impl MediaCtx {
                 (None, None) => None,
             };
             let exif_datetime = exif.and_then(|e| e.datetime.clone());
-            Self { url, thumb, medium, is_video: false, exif_tech, exif_camera_lens, exif_datetime }
+            Self { url, thumb, medium, is_video: false, aspect_ratio, exif_tech, exif_camera_lens, exif_datetime }
         }
     }
 
@@ -361,6 +365,7 @@ impl MediaCtx {
             thumb,
             medium,
             is_video: false,
+            aspect_ratio: None,
             exif_tech: None,
             exif_camera_lens: None,
             exif_datetime: None,
@@ -497,8 +502,8 @@ mod tests {
                 name: "Day 1".into(),
                 body_html: None,
                 media: vec![
-                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false, exif: None },
-                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false, exif: None },
+                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false, exif: None, dimensions: None },
+                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false, exif: None, dimensions: None },
                 ],
             }],
             source_dir,

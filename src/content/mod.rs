@@ -61,6 +61,8 @@ pub struct MediaItem {
     pub is_video: bool,
     /// `None` for videos or photos without readable EXIF.
     pub exif: Option<ExifData>,
+    /// Pixel dimensions. `None` for videos or unreadable images.
+    pub dimensions: Option<(u32, u32)>,
 }
 
 /// A group of media from one subfolder (subfolder name becomes a section heading).
@@ -382,6 +384,12 @@ fn read_exif(path: &Path) -> Option<ExifData> {
     Some(ExifData { datetime, camera, lens, aperture, shutter, iso, focal_length })
 }
 
+fn read_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let reader = image::ImageReader::open(path).ok()?;
+    let (w, h) = reader.into_dimensions().ok()?;
+    Some((w, h))
+}
+
 fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
@@ -404,7 +412,8 @@ fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
         .map(|p| {
             let is_video = is_video(&p);
             let exif = if is_video { None } else { read_exif(&p) };
-            MediaItem { path: p, is_video, exif }
+            let dimensions = if is_video { None } else { read_dimensions(&p) };
+            MediaItem { path: p, is_video, exif, dimensions }
         })
         .collect();
     items.sort_by(|a, b| a.path.cmp(&b.path));
@@ -438,10 +447,11 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
             info!(path = %path.display(), "skipping nsfw media file");
         } else if is_video(&path) && is_web_optimized(&path) {
             info!(path = %path.display(), "ingesting web-optimized video");
-            flat_media.push(MediaItem { path, is_video: true, exif: None });
+            flat_media.push(MediaItem { path, is_video: true, exif: None, dimensions: None });
         } else if is_photo(&path) {
             let exif = read_exif(&path);
-            flat_media.push(MediaItem { path, is_video: false, exif });
+            let dimensions = read_dimensions(&path);
+            flat_media.push(MediaItem { path, is_video: false, exif, dimensions });
         }
     }
 

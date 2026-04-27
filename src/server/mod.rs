@@ -433,7 +433,7 @@ mod tests {
             photo_groups: vec![PhotoGroup {
                 name: String::new(),
                 body_html: None,
-                media: vec![MediaItem { path: source_dir.join("img.jpg"), is_video: false, exif: None }],
+                media: vec![MediaItem { path: source_dir.join("img.jpg"), is_video: false, exif: None, dimensions: None }],
             }],
             source_dir: source_dir.to_owned(),
         }
