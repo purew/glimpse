@@ -293,7 +293,7 @@ fn media_url(slug: &str, source_dir: &Path, path: &Path) -> String {
     format!("/media/{}/{}", slug, rel.display())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct MediaCtx {
     url: String,
     /// `?size=thumb` derivative URL; empty for videos.
@@ -301,10 +301,9 @@ struct MediaCtx {
     /// `?size=medium` derivative URL; empty for videos.
     medium: String,
     is_video: bool,
-    /// CSS `aspect-ratio` value, e.g. `"3/2"` or `"2/3"`. `None` for videos or unreadable images.
-    aspect_ratio: Option<String>,
-    /// True when the image is more than twice as wide as it is tall (panoramic).
-    is_panoramic: bool,
+    /// Aspect ratio (width/height) used for CSS `flex-grow` and `aspect-ratio`.
+    /// Defaults to 4/3 when dimensions are unknown; 1.0 for videos (unused).
+    flex_grow: f64,
     /// Focal length · aperture · shutter · ISO, e.g. `"50mm · f/2.8 · 1/250s · ISO 400"`.
     exif_tech: Option<String>,
     /// Camera + deduplicated lens on one line, e.g. `"Nikon Z6_3 · Nikkor Z 50mm f/1.8 S"`.
@@ -322,8 +321,7 @@ impl MediaCtx {
                 thumb: String::new(),
                 medium: String::new(),
                 is_video: true,
-                aspect_ratio: None,
-                is_panoramic: false,
+                flex_grow: 1.0,
                 exif_tech: None,
                 exif_camera_lens: None,
                 exif_datetime: None,
@@ -331,8 +329,9 @@ impl MediaCtx {
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
-            let is_panoramic = item.dimensions.is_some_and(|(w, h)| w > h * 2);
-            let aspect_ratio = item.dimensions.map(|(w, h)| format!("{w}/{h}"));
+            let flex_grow = item.dimensions
+                .map(|(w, h)| w as f64 / h as f64)
+                .unwrap_or(4.0 / 3.0);
             let exif = item.exif.as_ref();
             let exif_tech = exif.and_then(|e| {
                 let parts: Vec<&str> = [
@@ -356,7 +355,7 @@ impl MediaCtx {
                 (None, None) => None,
             };
             let exif_datetime = exif.and_then(|e| e.datetime.clone());
-            Self { url, thumb, medium, is_video: false, aspect_ratio, is_panoramic, exif_tech, exif_camera_lens, exif_datetime }
+            Self { url, thumb, medium, is_video: false, flex_grow, exif_tech, exif_camera_lens, exif_datetime }
         }
     }
 
@@ -369,8 +368,7 @@ impl MediaCtx {
             thumb,
             medium,
             is_video: false,
-            aspect_ratio: None,
-            is_panoramic: false,
+            flex_grow: 4.0 / 3.0,
             exif_tech: None,
             exif_camera_lens: None,
             exif_datetime: None,
@@ -417,11 +415,70 @@ impl PostSummaryCtx {
     }
 }
 
+/// Container width and target row height used only for deciding which images share a row.
+/// CSS flex handles the actual scaling, so these are approximate.
+const GALLERY_CONTAINER_W: f64 = 1160.0;
+const GALLERY_TARGET_H: f64 = 280.0;
+const GALLERY_AR_THRESHOLD: f64 = GALLERY_CONTAINER_W / GALLERY_TARGET_H;
+
+#[derive(Debug, Serialize)]
+struct GalleryRowCtx {
+    media: Vec<MediaCtx>,
+    /// True for the final partial row; a spacer absorbs leftover space so items stay at natural size.
+    is_last_unjustified: bool,
+    /// True when this row holds a single video (height: auto, not the fixed gallery row height).
+    is_video_row: bool,
+}
+
+/// Packs a flat list of media items into justified gallery rows.
+///
+/// Each row's items share a CSS `flex-grow` proportional to their aspect ratio, producing
+/// justified rows that reflow at any viewport width without JavaScript.
+fn pack_into_rows(media: Vec<MediaCtx>) -> Vec<GalleryRowCtx> {
+    let mut rows: Vec<GalleryRowCtx> = Vec::new();
+    let mut current: Vec<MediaCtx> = Vec::new();
+    let mut ar_sum: f64 = 0.0;
+
+    for item in media {
+        if item.is_video {
+            if !current.is_empty() {
+                rows.push(GalleryRowCtx { media: current, is_last_unjustified: false, is_video_row: false });
+                current = Vec::new();
+                ar_sum = 0.0;
+            }
+            rows.push(GalleryRowCtx { media: vec![item], is_last_unjustified: false, is_video_row: true });
+        } else {
+            let ar = item.flex_grow;
+            if !current.is_empty() && ar_sum + ar > GALLERY_AR_THRESHOLD {
+                rows.push(GalleryRowCtx { media: current, is_last_unjustified: false, is_video_row: false });
+                current = Vec::new();
+                ar_sum = 0.0;
+            }
+            ar_sum += ar;
+            current.push(item);
+        }
+    }
+
+    if !current.is_empty() {
+        let is_sparse = current.len() < 3 && ar_sum < GALLERY_AR_THRESHOLD * 0.5;
+        if is_sparse
+            && let Some(prev) = rows.last_mut().filter(|r| !r.is_video_row)
+        {
+            prev.media.extend(current);
+            prev.is_last_unjustified = true;
+            return rows;
+        }
+        rows.push(GalleryRowCtx { media: current, is_last_unjustified: true, is_video_row: false });
+    }
+
+    rows
+}
+
 #[derive(Debug, Serialize)]
 struct PhotoGroupCtx {
     name: String,
     body_html: Option<String>,
-    media: Vec<MediaCtx>,
+    rows: Vec<GalleryRowCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -453,7 +510,7 @@ impl PostDetailCtx {
                 PhotoGroupCtx {
                     name: group.name.clone(),
                     body_html: group.body_html.clone(),
-                    media,
+                    rows: pack_into_rows(media),
                 }
             })
             .collect();

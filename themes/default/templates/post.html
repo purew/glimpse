@@ -30,33 +30,40 @@
     </div>
     {% endif %}
     <div class="gallery">
-      {% for item in group.media %}
-      {% if item.is_video %}
-      <div class="gallery-item gallery-item--video">
-        <video controls preload="metadata">
-          <source src="{{ item.url }}">
-        </video>
-      </div>
-      {% else %}
-      <a href="{{ item.url }}" class="gallery-item{% if item.is_panoramic %} gallery-item--panoramic{% endif %}" data-lightbox data-medium="{{ item.medium }}"
-         {% if item.aspect_ratio %}style="aspect-ratio: {{ item.aspect_ratio }}"{% endif %}
-         {% if item.exif_tech %}data-exif-tech="{{ item.exif_tech }}"{% endif %}
-         {% if item.exif_camera_lens %}data-exif-camera-lens="{{ item.exif_camera_lens }}"{% endif %}
-         {% if item.exif_datetime %}data-exif-datetime="{{ item.exif_datetime }}"{% endif %}>
-        <img
-          src="{{ item.medium }}"
-          srcset="{{ item.thumb }} 400w, {{ item.medium }} 1200w"
-          sizes="(max-width: 640px) calc(100vw - 2rem), 760px"
-          alt="" loading="lazy">
-        {% if item.exif_tech or item.exif_camera_lens or item.exif_datetime %}
-        <div class="gallery-exif">
-          {% if item.exif_datetime %}<span class="gallery-exif-time">{{ item.exif_datetime }}</span>{% endif %}
-          {% if item.exif_camera_lens %}<span class="gallery-exif-camera">{{ item.exif_camera_lens }}</span>{% endif %}
-          {% if item.exif_tech %}<span class="gallery-exif-tech">{{ item.exif_tech }}</span>{% endif %}
+      {% for row in group.rows %}
+      <div class="gallery-row{% if row.is_video_row %} gallery-row--video{% elif row.is_last_unjustified %} gallery-row--last{% endif %}">
+        {% for item in row.media %}
+        {% if item.is_video %}
+        <div class="gallery-item gallery-item--video">
+          <video controls preload="metadata">
+            <source src="{{ item.url }}">
+          </video>
         </div>
+        {% else %}
+        <a href="{{ item.url }}" class="gallery-item" data-lightbox data-medium="{{ item.medium }}"
+           style="flex-grow: {{ item.flex_grow }}; aspect-ratio: {{ item.flex_grow }}"
+           {% if item.exif_tech %}data-exif-tech="{{ item.exif_tech }}"{% endif %}
+           {% if item.exif_camera_lens %}data-exif-camera-lens="{{ item.exif_camera_lens }}"{% endif %}
+           {% if item.exif_datetime %}data-exif-datetime="{{ item.exif_datetime }}"{% endif %}>
+          <img
+            src="{{ item.medium }}"
+            srcset="{{ item.thumb }} 400w, {{ item.medium }} 1200w"
+            sizes="(max-width: 640px) calc(100vw - 2rem), (max-width: 1200px) 50vw, 760px"
+            alt="" loading="lazy">
+          {% if item.exif_tech or item.exif_camera_lens or item.exif_datetime %}
+          <div class="gallery-exif">
+            {% if item.exif_datetime %}<span class="gallery-exif-time">{{ item.exif_datetime }}</span>{% endif %}
+            {% if item.exif_camera_lens %}<span class="gallery-exif-camera">{{ item.exif_camera_lens }}</span>{% endif %}
+            {% if item.exif_tech %}<span class="gallery-exif-tech">{{ item.exif_tech }}</span>{% endif %}
+          </div>
+          {% endif %}
+        </a>
         {% endif %}
-      </a>
-      {% endif %}
+        {% endfor %}
+        {% if row.is_last_unjustified %}
+        <div class="gallery-row-spacer"></div>
+        {% endif %}
+      </div>
       {% endfor %}
     </div>
   </section>
