@@ -106,6 +106,21 @@ impl Theme {
             })
     }
 
+    /// Render the 404 not-found page.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
+    pub fn render_not_found(&self, viewer: &Viewer) -> Result<String, ThemeError> {
+        let tmpl = self
+            .env
+            .get_template("404.html")
+            .map_err(|e| ThemeError::Load { name: "404.html", source: e })?;
+
+        tmpl.render(context! { is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
+            .map_err(|e| ThemeError::Render { name: "404.html", source: e })
+    }
+
     /// Render the login page.
     ///
     /// `error` is an optional message shown when a previous attempt failed

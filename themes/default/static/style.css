@@ -550,3 +550,30 @@ main {
 .lightbox-next:hover {
   opacity: 1;
 }
+
+/* 404 */
+.not-found {
+  text-align: center;
+  padding: 6rem 1rem;
+}
+
+.not-found h1 {
+  font-size: 6rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  color: #ccc;
+}
+
+.not-found p {
+  color: #666;
+  margin: 0 0 2rem;
+}
+
+.not-found-home {
+  display: inline-block;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 0.9rem;
+}

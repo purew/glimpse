@@ -67,7 +67,20 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
         .route("/logout", post(logout_handler))
         .route("/admin/reload", post(admin_reload_handler))
         .nest_service("/static", ServeDir::new(static_dir))
+        .fallback(not_found_handler)
         .with_state(state)
+}
+
+fn not_found_response(theme: &Theme, viewer: &Viewer) -> Response {
+    match theme.render_not_found(viewer) {
+        Ok(html) => (StatusCode::NOT_FOUND, Html(html)).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn not_found_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
+    let viewer = viewer_from_jar(&jar, &state.users);
+    not_found_response(&state.theme, &viewer)
 }
 
 // ── Session helpers ───────────────────────────────────────────────────────────
@@ -150,7 +163,7 @@ async fn post_handler(
             let next = format!("/posts/{slug}");
             return Redirect::to(&format!("/login?next={next}")).into_response();
         }
-        return StatusCode::NOT_FOUND.into_response();
+        return not_found_response(&state.theme, &viewer);
     };
     match state.theme.render_post(post, &viewer) {
         Ok(html) => html_response(html, &request_headers),
