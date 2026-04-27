@@ -321,6 +321,21 @@ main {
   flex-basis: auto;
 }
 
+@media (max-width: 640px) {
+  .gallery-row {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .gallery-item {
+    flex-basis: auto;
+  }
+
+  .gallery-row-spacer {
+    display: none;
+  }
+}
+
 .gallery-item {
   display: block;
   flex-basis: 0;
