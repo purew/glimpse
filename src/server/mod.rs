@@ -143,10 +143,9 @@ async fn post_handler(
     let viewer = viewer_from_jar(&jar, &state.users);
     let site = state.site.load_full();
     let Some(post) = visible(&site, &viewer).find(|p| p.slug == slug) else {
-        // If the post exists, is not a draft, and the viewer is unauthenticated,
-        // redirect to the login page so they can sign in and return here.
+        // If the post exists and the viewer is unauthenticated, redirect to login.
         let exists_but_restricted = !viewer.logged_in
-            && site.posts.iter().any(|p| p.slug == slug && !p.is_draft());
+            && site.posts.iter().any(|p| p.slug == slug);
         if exists_but_restricted {
             let next = format!("/posts/{slug}");
             return Redirect::to(&format!("/login?next={next}")).into_response();
@@ -564,8 +563,13 @@ mod tests {
             vec![make_post("wip", vec![])],
             tmp.path().join("cache"),
         ));
+        // Unauthenticated visitors are redirected to login, not shown 404.
         let resp = app.oneshot(get("/posts/wip")).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            resp.headers().get(header::LOCATION).unwrap(),
+            "/login?next=/posts/wip"
+        );
     }
 
     #[tokio::test]
@@ -584,14 +588,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_returns_404_for_draft_without_session() {
+    async fn post_redirects_to_login_for_draft_without_session() {
         let tmp = TempDir::new().unwrap();
         let app = build_router(test_state(
             vec![make_post("wip", vec![])],
             tmp.path().join("cache"),
         ));
         let resp = app.oneshot(get("/posts/wip")).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            resp.headers().get(header::LOCATION).unwrap(),
+            "/login?next=/posts/wip"
+        );
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────
