@@ -303,6 +303,8 @@ struct MediaCtx {
     is_video: bool,
     /// CSS `aspect-ratio` value, e.g. `"3/2"` or `"2/3"`. `None` for videos or unreadable images.
     aspect_ratio: Option<String>,
+    /// True when the image is more than twice as wide as it is tall (panoramic).
+    is_panoramic: bool,
     /// Focal length · aperture · shutter · ISO, e.g. `"50mm · f/2.8 · 1/250s · ISO 400"`.
     exif_tech: Option<String>,
     /// Camera + deduplicated lens on one line, e.g. `"Nikon Z6_3 · Nikkor Z 50mm f/1.8 S"`.
@@ -321,6 +323,7 @@ impl MediaCtx {
                 medium: String::new(),
                 is_video: true,
                 aspect_ratio: None,
+                is_panoramic: false,
                 exif_tech: None,
                 exif_camera_lens: None,
                 exif_datetime: None,
@@ -328,6 +331,7 @@ impl MediaCtx {
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
+            let is_panoramic = item.dimensions.is_some_and(|(w, h)| w > h * 2);
             let aspect_ratio = item.dimensions.map(|(w, h)| format!("{w}/{h}"));
             let exif = item.exif.as_ref();
             let exif_tech = exif.and_then(|e| {
@@ -352,7 +356,7 @@ impl MediaCtx {
                 (None, None) => None,
             };
             let exif_datetime = exif.and_then(|e| e.datetime.clone());
-            Self { url, thumb, medium, is_video: false, aspect_ratio, exif_tech, exif_camera_lens, exif_datetime }
+            Self { url, thumb, medium, is_video: false, aspect_ratio, is_panoramic, exif_tech, exif_camera_lens, exif_datetime }
         }
     }
 
@@ -366,6 +370,7 @@ impl MediaCtx {
             medium,
             is_video: false,
             aspect_ratio: None,
+            is_panoramic: false,
             exif_tech: None,
             exif_camera_lens: None,
             exif_datetime: None,

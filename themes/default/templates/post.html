@@ -38,7 +38,7 @@
         </video>
       </div>
       {% else %}
-      <a href="{{ item.url }}" class="gallery-item" data-lightbox data-medium="{{ item.medium }}"
+      <a href="{{ item.url }}" class="gallery-item{% if item.is_panoramic %} gallery-item--panoramic{% endif %}" data-lightbox data-medium="{{ item.medium }}"
          {% if item.aspect_ratio %}style="aspect-ratio: {{ item.aspect_ratio }}"{% endif %}
          {% if item.exif_tech %}data-exif-tech="{{ item.exif_tech }}"{% endif %}
          {% if item.exif_camera_lens %}data-exif-camera-lens="{{ item.exif_camera_lens }}"{% endif %}

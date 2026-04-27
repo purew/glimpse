@@ -302,14 +302,9 @@ main {
   gap: 0.375rem;
 }
 
-.gallery::after {
-  content: '';
-  flex-grow: 999;
-}
-
 .gallery-item {
   display: block;
-  flex: 1 0 auto;
+  flex: 0 0 auto;
   height: clamp(220px, 28vw, 380px);
   aspect-ratio: 4 / 3; /* natural-width fallback for photos without known dimensions */
   overflow: hidden;
@@ -363,6 +358,11 @@ main {
 .gallery-exif-tech {
   color: rgba(255, 255, 255, 0.6);
   font-size: 0.64rem;
+}
+
+.gallery-item--panoramic {
+  flex: 0 0 100%;
+  height: auto;
 }
 
 .gallery-item--video {
