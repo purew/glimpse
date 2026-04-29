@@ -38,7 +38,12 @@
       <h2 class="post-card-title">
         <a href="/posts/{{ post.slug }}">{{ post.title }}</a>
       </h2>
-      <time class="post-card-date" datetime="{{ post.date }}">{{ post.date }}</time>
+      <div class="post-card-meta">
+        <time class="post-card-date" datetime="{{ post.date }}">{{ post.date }}</time>
+        {% if post.access %}
+        <span class="post-card-access">{{ post.access | join(", ") }}</span>
+        {% endif %}
+      </div>
     </div>
   </article>
   {% else %}

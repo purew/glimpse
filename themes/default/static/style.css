@@ -205,9 +205,22 @@ main {
   text-decoration: underline;
 }
 
+.post-card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .post-card-date {
   font-size: 0.8125rem;
   color: var(--color-muted);
+}
+
+.post-card-access {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  opacity: 0.7;
 }
 
 /* ── Draft indicators ─────────────────────────────────────────────────────── */
@@ -252,9 +265,23 @@ main {
   margin-bottom: 0.375rem;
 }
 
-.post-date {
+.post-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
   font-size: 0.875rem;
   color: var(--color-muted);
+}
+
+.post-date {
+  font-size: inherit;
+  color: inherit;
+}
+
+.post-access {
+  font-size: inherit;
+  color: inherit;
 }
 
 .post-body {
