@@ -13,6 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
+use tracing::info;
 use serde::Deserialize;
 use tower_http::services::ServeDir;
 
@@ -165,6 +166,9 @@ async fn post_handler(
         }
         return not_found_response(&state.theme, &viewer);
     };
+    if let Some(username) = &viewer.username {
+        info!(username, slug, "post viewed");
+    }
     match state.theme.render_post(post, &viewer) {
         Ok(html) => html_response(html, &request_headers),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
