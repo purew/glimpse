@@ -219,6 +219,48 @@ This replaces `feed_token_hash` in `users.toml` and prints the new token. The ol
 - The feed endpoint returns 404 for unknown tokens — it does not confirm that the endpoint exists.
 - Feed responses carry `Cache-Control: private, no-store`.
 
+## NixOS
+
+The flake exposes a NixOS module at `nixosModules.glimpse`. Add the flake as an input, import the module, then configure the service:
+
+```nix
+# flake.nix
+inputs.glimpse-rs.url = "github:purew/glimpse";
+```
+
+```nix
+# configuration.nix
+imports = [ inputs.glimpse-rs.nixosModules.glimpse ];
+
+services.glimpse = {
+  enable = true;
+  siteTitle = "My family photos";
+  stateDir = "/var/lib/glimpse";   # posts/, cache/, and users.toml live here
+  sessionSecretFile = "/run/secrets/glimpse.env";  # must export GLIMPSE_SESSION_SECRET
+};
+```
+
+`sessionSecretFile` is a path to a file that exports `GLIMPSE_SESSION_SECRET` as a 128-character hex string (64 bytes). Generate one with:
+
+```bash
+echo "GLIMPSE_SESSION_SECRET=$(openssl rand -hex 64)" > /path/to/glimpse.env
+```
+
+**All module options** (all have sensible defaults except `sessionSecretFile`):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enable` | `false` | Enable the service |
+| `stateDir` | `/var/lib/glimpse` | Working directory for posts, cache, and users.toml |
+| `sessionSecretFile` | — | Path to env file exporting `GLIMPSE_SESSION_SECRET` |
+| `postsDir` | `${stateDir}/posts` | Directory containing post subdirectories |
+| `cacheDir` | `${stateDir}/cache` | Directory for generated image derivatives |
+| `usersFile` | `${stateDir}/users.toml` | Path to users.toml |
+| `listen` | `127.0.0.1:3000` | Bind address and port |
+| `siteTitle` | `Glimpse` | Title shown in browser tab and page header |
+| `preprocessConcurrency` | `2` | Max concurrent derivative generation on reload |
+| `logLevel` | `info` | Value passed to `RUST_LOG` |
+
 ## Tooling
 
 | Command | Purpose |
