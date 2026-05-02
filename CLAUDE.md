@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Design Principles
 
+- **Photo albums first** — the primary purpose is displaying beautiful photo albums; text and navigation are lightweight context around the imagery, not the focus.
 - **Modern browsers only** — target current evergreen browsers; use plain HTML, CSS, and browser-native APIs without polyfills or transpilation.
 - **Server-side first** — render and process on the server; keep client-side logic to a minimum.
 - **Simple auth is fine** — the audience is family and friends, not the public internet; favour simplicity over elaborate auth schemes.
