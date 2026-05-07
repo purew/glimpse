@@ -15,6 +15,8 @@ pub(crate) struct Config {
     pub(crate) posts_dir: PathBuf,
     /// Directory where generated image/video derivatives are cached.
     pub(crate) cache_dir: PathBuf,
+    /// Number of posts to preprocess concurrently at startup and on reload.
+    pub(crate) preprocess_concurrency: usize,
 }
 
 impl Default for Config {
@@ -24,6 +26,7 @@ impl Default for Config {
             site_title: "Glimpse".to_owned(),
             posts_dir: PathBuf::from("posts"),
             cache_dir: PathBuf::from("cache"),
+            preprocess_concurrency: 2,
         }
     }
 }

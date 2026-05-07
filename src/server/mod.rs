@@ -92,6 +92,7 @@ pub(crate) async fn run(config_path: PathBuf, users_path: PathBuf) -> anyhow::Re
 
     let addr = cfg.listen;
     let load_posts_dir = cfg.posts_dir.clone();
+    let concurrency = cfg.preprocess_concurrency;
     let state = AppState {
         site: Arc::clone(&site),
         theme: Arc::new(theme),
@@ -106,32 +107,11 @@ pub(crate) async fn run(config_path: PathBuf, users_path: PathBuf) -> anyhow::Re
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "listening");
 
+    let site = Arc::clone(&site);
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || {
-            let mut entries: Vec<_> = std::fs::read_dir(&load_posts_dir)
-                .map_err(|e| content::ContentError::Io { path: load_posts_dir.clone(), source: e })?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-
-            let mut posts: Vec<content::Post> = Vec::with_capacity(entries.len());
-            for entry in entries {
-                let t = std::time::Instant::now();
-                let post = content::parse_post(&entry.path(), &cache_dir)?;
-                let slug = post.slug.clone();
-                posts.push(post);
-                posts.sort_by(|a, b| a.date.cmp(&b.date));
-                site.store(Arc::new(Site { posts: posts.clone() }));
-                info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
-            }
-            Ok::<_, content::ContentError>(posts.len())
-        }).await;
-
-        match result {
-            Ok(Ok(count)) => info!(count, "finished loading posts"),
-            Ok(Err(e)) => error!("failed to load site: {e:#}"),
-            Err(e) => error!("site loader panicked: {e}"),
+        match load_posts(load_posts_dir, cache_dir, concurrency, site).await {
+            Ok(count) => info!(count, "finished loading posts"),
+            Err(e) => error!("failed to load site: {e:#}"),
         }
     });
 
@@ -161,6 +141,52 @@ fn decode_hex(s: &str) -> anyhow::Result<Vec<u8>> {
                 .with_context(|| format!("invalid hex at position {i}"))
         })
         .collect()
+}
+
+// ── Post loader ───────────────────────────────────────────────────────────────
+
+async fn load_posts(
+    posts_dir: PathBuf,
+    cache_dir: PathBuf,
+    concurrency: usize,
+    site: Arc<ArcSwap<Site>>,
+) -> anyhow::Result<usize> {
+    let mut entries: Vec<_> = std::fs::read_dir(&posts_dir)
+        .with_context(|| format!("failed to read {}", posts_dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(entries.len().max(1));
+
+    for entry in entries {
+        let sem = Arc::clone(&semaphore);
+        let cache_dir = cache_dir.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
+            let t = std::time::Instant::now();
+            let result = tokio::task::spawn_blocking(move || {
+                content::parse_post(&entry.path(), &cache_dir).map(|post| (post, t))
+            })
+            .await;
+            let _ = tx.send(result).await;
+        });
+    }
+    drop(tx);
+
+    let mut posts: Vec<content::Post> = Vec::new();
+    while let Some(result) = rx.recv().await {
+        let (post, t) = result??;
+        let slug = post.slug.clone();
+        posts.push(post);
+        posts.sort_by(|a, b| a.date.cmp(&b.date));
+        site.store(Arc::new(Site { posts: posts.clone() }));
+        info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
+    }
+    Ok(posts.len())
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -416,32 +442,12 @@ async fn admin_reload_handler(
     }
     let posts_dir = state.posts_dir.clone();
     let cache_dir = state.cfg.cache_dir.clone();
+    let concurrency = state.cfg.preprocess_concurrency;
+    let site = Arc::clone(&state.site);
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || {
-            let mut entries: Vec<_> = std::fs::read_dir(&posts_dir)
-                .map_err(|e| content::ContentError::Io { path: posts_dir.clone(), source: e })?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-
-            let mut posts: Vec<content::Post> = Vec::with_capacity(entries.len());
-            for entry in entries {
-                let t = std::time::Instant::now();
-                let post = content::parse_post(&entry.path(), &cache_dir)?;
-                let slug = post.slug.clone();
-                posts.push(post);
-                posts.sort_by(|a, b| a.date.cmp(&b.date));
-                state.site.store(Arc::new(content::Site { posts: posts.clone() }));
-                info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
-            }
-            Ok::<_, content::ContentError>(posts.len())
-        }).await;
-
-        match result {
-            Ok(Ok(count)) => info!(count, "finished reloading posts"),
-            Ok(Err(e)) => error!("failed to reload site: {e:#}"),
-            Err(e) => error!("site reload panicked: {e}"),
+        match load_posts(posts_dir, cache_dir, concurrency, site).await {
+            Ok(count) => info!(count, "finished reloading posts"),
+            Err(e) => error!("failed to reload site: {e:#}"),
         }
     });
     Redirect::to("/").into_response()
