@@ -17,7 +17,7 @@ use tracing::{info, warn};
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum ContentError {
+pub(crate) enum ContentError {
     #[error("io error reading {path}")]
     Io {
         path: PathBuf,
@@ -40,71 +40,71 @@ pub enum ContentError {
 
 /// EXIF metadata extracted from a photo at load time.
 #[derive(Debug, Clone)]
-pub struct ExifData {
+pub(crate) struct ExifData {
     /// Formatted capture time, e.g. `"2025-03-18 14:32"`.
-    pub datetime: Option<String>,
+    pub(crate) datetime: Option<String>,
     /// Camera make + model, e.g. `"Nikon Z6_3"`.
-    pub camera: Option<String>,
+    pub(crate) camera: Option<String>,
     /// Lens model, e.g. `"Nikon Nikkor Z 50mm f/1.8 S"`.
-    pub lens: Option<String>,
+    pub(crate) lens: Option<String>,
     /// Aperture, e.g. `"f/2.8"`.
-    pub aperture: Option<String>,
+    pub(crate) aperture: Option<String>,
     /// Shutter speed, e.g. `"1/250s"`.
-    pub shutter: Option<String>,
+    pub(crate) shutter: Option<String>,
     /// ISO sensitivity, e.g. `"ISO 400"`.
-    pub iso: Option<String>,
+    pub(crate) iso: Option<String>,
     /// Focal length, e.g. `"50mm"`.
-    pub focal_length: Option<String>,
+    pub(crate) focal_length: Option<String>,
 }
 
 /// A single media item (photo or video) within a post.
 #[derive(Debug, Clone)]
-pub struct MediaItem {
-    pub path: PathBuf,
-    pub is_video: bool,
+pub(crate) struct MediaItem {
+    pub(crate) path: PathBuf,
+    pub(crate) is_video: bool,
     /// `None` for videos or photos without readable EXIF.
-    pub exif: Option<ExifData>,
+    pub(crate) exif: Option<ExifData>,
     /// Pixel dimensions. `None` for videos or unreadable images.
-    pub dimensions: Option<(u32, u32)>,
+    pub(crate) dimensions: Option<(u32, u32)>,
 }
 
 /// A group of media from one subfolder (subfolder name becomes a section heading).
 #[derive(Debug, Clone)]
-pub struct PhotoGroup {
+pub(crate) struct PhotoGroup {
     /// Display name: frontmatter title if present, else subfolder name; empty string for flat media.
-    pub name: String,
+    pub(crate) name: String,
     /// Pre-rendered HTML from a section `index.md`, if one exists in the subfolder.
-    pub body_html: Option<String>,
-    pub media: Vec<MediaItem>,
+    pub(crate) body_html: Option<String>,
+    pub(crate) media: Vec<MediaItem>,
 }
 
 /// A single post parsed from a `posts/` subfolder.
 #[derive(Debug, Clone)]
-pub struct Post {
+pub(crate) struct Post {
     /// URL-safe identifier derived from the folder name.
-    pub slug: String,
-    pub title: String,
+    pub(crate) slug: String,
+    pub(crate) title: String,
     /// ISO 8601 date string (YYYY-MM-DD).
-    pub date: String,
+    pub(crate) date: String,
     /// Groups allowed to view this post. Empty = draft (admin-only).
-    pub access: Vec<String>,
-    pub cover: Option<PathBuf>,
+    pub(crate) access: Vec<String>,
+    pub(crate) cover: Option<PathBuf>,
     /// Markdown body pre-rendered to HTML at load time.
-    pub body_html: String,
-    pub photo_groups: Vec<PhotoGroup>,
-    pub source_dir: PathBuf,
+    pub(crate) body_html: String,
+    pub(crate) photo_groups: Vec<PhotoGroup>,
+    pub(crate) source_dir: PathBuf,
 }
 
 impl Post {
-    pub fn is_draft(&self) -> bool {
+    pub(crate) fn is_draft(&self) -> bool {
         self.access.is_empty()
     }
 }
 
 /// The full in-memory site model.
-pub struct Site {
+pub(crate) struct Site {
     /// Posts sorted ascending by date.
-    pub posts: Vec<Post>,
+    pub(crate) posts: Vec<Post>,
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -509,7 +509,7 @@ fn discover_photo_groups(post_dir: &Path, cache_dir: &Path) -> Result<Vec<PhotoG
     Ok(groups)
 }
 
-pub fn parse_post(post_dir: &Path, cache_dir: &Path) -> Result<Post, ContentError> {
+pub(crate) fn parse_post(post_dir: &Path, cache_dir: &Path) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
     let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
         path: index_path.clone(),

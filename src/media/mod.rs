@@ -15,7 +15,7 @@ use thiserror::Error;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ImageSize {
+pub(crate) enum ImageSize {
     /// Max 400 px wide, aspect-ratio preserved.
     Thumbnail,
     /// Max 1200 px wide, aspect-ratio preserved.
@@ -39,7 +39,7 @@ impl ImageSize {
 }
 
 #[derive(Debug, Error)]
-pub enum MediaError {
+pub(crate) enum MediaError {
     #[error("io error accessing {path}")]
     Io {
         path: PathBuf,
@@ -56,12 +56,12 @@ pub enum MediaError {
 
 // ── MediaCache ────────────────────────────────────────────────────────────────
 
-pub struct MediaCache {
+pub(crate) struct MediaCache {
     cache_dir: PathBuf,
 }
 
 impl MediaCache {
-    pub fn new(cache_dir: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(cache_dir: impl Into<PathBuf>) -> Self {
         Self {
             cache_dir: cache_dir.into(),
         }
@@ -77,7 +77,7 @@ impl MediaCache {
     ///
     /// Returns [`MediaError`] if the cache directory cannot be created, the
     /// source image cannot be opened, or the derivative cannot be written.
-    pub async fn ensure(&self, source: &Path, size: ImageSize) -> Result<PathBuf, MediaError> {
+    pub(crate) async fn ensure(&self, source: &Path, size: ImageSize) -> Result<PathBuf, MediaError> {
         let dest = self.derivative_path(source, size)?;
         if dest.exists() {
             return Ok(dest);

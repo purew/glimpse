@@ -6,15 +6,15 @@ use tracing::info;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct Config {
+pub(crate) struct Config {
     /// Address and port the HTTP server binds to.
-    pub listen: SocketAddr,
+    pub(crate) listen: SocketAddr,
     /// Site title shown in the browser tab and page header.
-    pub site_title: String,
+    pub(crate) site_title: String,
     /// Directory containing post subdirectories.
-    pub posts_dir: PathBuf,
+    pub(crate) posts_dir: PathBuf,
     /// Directory where generated image/video derivatives are cached.
-    pub cache_dir: PathBuf,
+    pub(crate) cache_dir: PathBuf,
 }
 
 impl Default for Config {
@@ -30,7 +30,7 @@ impl Default for Config {
 
 impl Config {
     /// Load from `path`. Returns [`Config::default`] if the file does not exist.
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 let cfg = toml::from_str(&text)?;

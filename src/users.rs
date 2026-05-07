@@ -9,20 +9,20 @@ use sha2::Digest;
 
 /// A single user entry as stored in `users.toml`.
 #[derive(Debug, Deserialize)]
-pub struct User {
-    pub username: String,
+pub(crate) struct User {
+    pub(crate) username: String,
     password_hash: String,
-    pub groups: Vec<String>,
+    pub(crate) groups: Vec<String>,
     /// SHA-256 (hex) of the raw feed token. See `generate-feed-token` binary.
     #[serde(default)]
-    pub feed_token_hash: Option<String>,
+    pub(crate) feed_token_hash: Option<String>,
 }
 
 /// Return the SHA-256 hex digest of `token`.
 ///
 /// Used both here (for lookup) and in the `generate-feed-token` binary (for
 /// producing the hash to store in `users.toml`).
-pub fn hash_feed_token(token: &str) -> String {
+pub(crate) fn hash_feed_token(token: &str) -> String {
     let hash = sha2::Sha256::digest(token.as_bytes());
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -35,7 +35,7 @@ struct UsersFile {
 
 /// In-memory view of the loaded user list.
 #[derive(Debug, Default)]
-pub struct Users {
+pub(crate) struct Users {
     users: Vec<User>,
 }
 
@@ -48,7 +48,7 @@ impl Users {
     /// # Errors
     ///
     /// Returns an error if the file exists but cannot be read or parsed.
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
         let text = match std::fs::read_to_string(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
@@ -62,7 +62,7 @@ impl Users {
     /// Return the user if `username` and `password` are correct, `None` otherwise.
     ///
     /// Constant-time comparison is handled internally by the argon2 crate.
-    pub fn verify(&self, username: &str, password: &str) -> Option<&User> {
+    pub(crate) fn verify(&self, username: &str, password: &str) -> Option<&User> {
         let user = self.get(username)?;
         let hash = PasswordHash::new(&user.password_hash).ok()?;
         Argon2::default()
@@ -72,7 +72,7 @@ impl Users {
     }
 
     /// Find a user by username; `None` if not found.
-    pub fn get(&self, username: &str) -> Option<&User> {
+    pub(crate) fn get(&self, username: &str) -> Option<&User> {
         self.users.iter().find(|u| u.username == username)
     }
 
@@ -80,7 +80,7 @@ impl Users {
     ///
     /// The token is hashed before comparison so the in-memory store never holds
     /// a live token.
-    pub fn lookup_by_feed_token(&self, token: &str) -> Option<&User> {
+    pub(crate) fn lookup_by_feed_token(&self, token: &str) -> Option<&User> {
         let token_hash = hash_feed_token(token);
         self.users
             .iter()

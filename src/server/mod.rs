@@ -74,7 +74,7 @@ fn router(state: AppState, static_dir: PathBuf) -> Router {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-pub async fn run(config_path: PathBuf, users_path: PathBuf) -> anyhow::Result<()> {
+pub(crate) async fn run(config_path: PathBuf, users_path: PathBuf) -> anyhow::Result<()> {
     let cfg = Arc::new(Config::load(&config_path).context("failed to load config")?);
 
     let posts_dir = cfg.posts_dir.clone();

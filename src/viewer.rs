@@ -4,15 +4,15 @@ use crate::content::{Post, Site};
 
 /// The entity whose perspective determines which posts are visible.
 #[derive(Debug, Clone)]
-pub struct Viewer {
-    pub groups: Vec<String>,
-    pub logged_in: bool,
-    pub username: Option<String>,
+pub(crate) struct Viewer {
+    pub(crate) groups: Vec<String>,
+    pub(crate) logged_in: bool,
+    pub(crate) username: Option<String>,
 }
 
 impl Viewer {
     #[cfg(test)]
-    pub fn admin() -> Self {
+    pub(crate) fn admin() -> Self {
         Self {
             groups: vec!["admin".to_owned()],
             logged_in: true,
@@ -20,7 +20,7 @@ impl Viewer {
         }
     }
 
-    pub fn public() -> Self {
+    pub(crate) fn public() -> Self {
         Self {
             groups: vec!["public".to_owned()],
             logged_in: false,
@@ -28,7 +28,7 @@ impl Viewer {
         }
     }
 
-    pub fn with_groups(groups: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub(crate) fn with_groups(groups: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             groups: groups.into_iter().map(Into::into).collect(),
             logged_in: true,
@@ -36,7 +36,7 @@ impl Viewer {
         }
     }
 
-    pub fn with_groups_and_username(
+    pub(crate) fn with_groups_and_username(
         groups: impl IntoIterator<Item = impl Into<String>>,
         username: String,
     ) -> Self {
@@ -47,11 +47,11 @@ impl Viewer {
         }
     }
 
-    pub fn is_admin(&self) -> bool {
+    pub(crate) fn is_admin(&self) -> bool {
         self.groups.iter().any(|g| g == "admin")
     }
 
-    pub fn can_view(&self, post: &Post) -> bool {
+    pub(crate) fn can_view(&self, post: &Post) -> bool {
         if self.is_admin() {
             return true;
         }
@@ -65,7 +65,7 @@ impl Viewer {
 }
 
 /// Returns an iterator over posts visible to `viewer`, in site order (ascending date).
-pub fn visible<'a>(site: &'a Site, viewer: &Viewer) -> impl Iterator<Item = &'a Post> {
+pub(crate) fn visible<'a>(site: &'a Site, viewer: &Viewer) -> impl Iterator<Item = &'a Post> {
     site.posts.iter().filter(move |p| viewer.can_view(p))
 }
 

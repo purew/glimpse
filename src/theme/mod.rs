@@ -18,7 +18,7 @@ use crate::viewer::{Viewer, visible};
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum ThemeError {
+pub(crate) enum ThemeError {
     #[error("could not load template '{name}'")]
     Load {
         name: &'static str,
@@ -35,9 +35,9 @@ pub enum ThemeError {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
-pub struct Theme {
+pub(crate) struct Theme {
     env: Environment<'static>,
-    pub site_title: String,
+    site_title: String,
     style_version: String,
 }
 
@@ -47,7 +47,7 @@ impl Theme {
     /// Templates are read from `{theme_dir}/templates/` on demand. The function
     /// itself does not fail even if the directory is absent; template errors will
     /// surface at render time.
-    pub fn load(theme_dir: &Path, site_title: String) -> Self {
+    pub(crate) fn load(theme_dir: &Path, site_title: String) -> Self {
         let templates_dir = theme_dir.join("templates");
         let mut env = Environment::new();
         env.set_loader(path_loader(templates_dir));
@@ -60,7 +60,7 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_index(&self, site: &Site, viewer: &Viewer) -> Result<String, ThemeError> {
+    pub(crate) fn render_index(&self, site: &Site, viewer: &Viewer) -> Result<String, ThemeError> {
         self.render_index_filtered(site, viewer, None)
     }
 
@@ -69,7 +69,7 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_group_index(&self, site: &Site, viewer: &Viewer, group: &str) -> Result<String, ThemeError> {
+    pub(crate) fn render_group_index(&self, site: &Site, viewer: &Viewer, group: &str) -> Result<String, ThemeError> {
         self.render_index_filtered(site, viewer, Some(group))
     }
 
@@ -103,7 +103,7 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_post(&self, post: &Post, viewer: &Viewer) -> Result<String, ThemeError> {
+    pub(crate) fn render_post(&self, post: &Post, viewer: &Viewer) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("post.html")
@@ -125,7 +125,7 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_not_found(&self, viewer: &Viewer) -> Result<String, ThemeError> {
+    pub(crate) fn render_not_found(&self, viewer: &Viewer) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("404.html")
@@ -143,7 +143,7 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub fn render_login(&self, error: Option<&str>, next: Option<&str>) -> Result<String, ThemeError> {
+    pub(crate) fn render_login(&self, error: Option<&str>, next: Option<&str>) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("login.html")
@@ -171,7 +171,7 @@ impl Theme {
 /// `token` is the raw (unhashed) feed token for this viewer; it is appended
 /// as `?t=<token>` to every image URL so the media route can authenticate the
 /// request without a cookie.
-pub fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str, site_title: &str) -> String {
+pub(crate) fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str, site_title: &str) -> String {
     let entries: Vec<Entry> = visible(site, viewer)
         .map(|post| feed_entry(post, base_url, token))
         .collect();
