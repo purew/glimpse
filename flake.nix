@@ -32,7 +32,7 @@
       buildInputs = [ ];
 
       # Runtime tools expected on PATH
-      runtimeDeps = [ pkgs.ffmpeg ];
+      runtimeDeps = [ pkgs.ffmpeg pkgs.exiftool ];
 
       # cleanCargoSource strips non-Rust files; extend the filter to keep themes
       src = pkgs.lib.cleanSourceWith {
@@ -174,7 +174,6 @@
 
         buildInputs = buildInputs ++ runtimeDeps ++ [
           pkgs.cargo-watch  # optional: cargo watch for development
-          pkgs.exiftool
         ];
       };
     };

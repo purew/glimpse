@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("themes/default"));
 
-    let site = content::load_site(&posts_dir).context("failed to load site")?;
+    let site = content::load_site(&posts_dir, &cache_dir).context("failed to load site")?;
     info!(count = site.posts.len(), "loaded posts");
 
     let theme = theme::Theme::load(&theme_dir, cfg.site_title.clone());

@@ -2,8 +2,11 @@
 //!
 //! Pure module — no HTTP, no HTML templating.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use exif::{In, Reader as ExifReader, Tag};
 use pulldown_cmark::{Options, Parser, html};
@@ -319,7 +322,45 @@ fn format_exif_datetime(raw: &str) -> String {
     }
 }
 
-fn read_exif(path: &Path) -> Option<ExifData> {
+fn exiftool_lens_cache_path(path: &Path, cache_dir: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    mtime.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+    let key = h.finish();
+    let exif_cache = cache_dir.join("exif");
+    std::fs::create_dir_all(&exif_cache).ok()?;
+    Some(exif_cache.join(format!("{key:016x}-lens.txt")))
+}
+
+fn exiftool_lens(path: &Path, cache_dir: &Path) -> Option<String> {
+    let cache_path = exiftool_lens_cache_path(path, cache_dir)?;
+
+    if cache_path.exists() {
+        let cached = std::fs::read_to_string(&cache_path).ok()?;
+        let s = cached.trim().to_owned();
+        return if s.is_empty() { None } else { Some(s) };
+    }
+
+    let output = std::process::Command::new("exiftool")
+        .args(["-Lens", "-s3"])
+        .arg(path)
+        .output()
+        .ok()?;
+
+    let lens = if output.status.success() {
+        let s = std::str::from_utf8(&output.stdout).ok()?.trim().to_owned();
+        if s.is_empty() { None } else { Some(s) }
+    } else {
+        None
+    };
+
+    let _ = std::fs::write(&cache_path, lens.as_deref().unwrap_or(""));
+    lens
+}
+
+fn read_exif(path: &Path, cache_dir: &Path) -> Option<ExifData> {
     let file = std::fs::File::open(path).ok()?;
     let exif = ExifReader::new()
         .read_from_container(&mut BufReader::new(file))
@@ -340,7 +381,8 @@ fn read_exif(path: &Path) -> Option<ExifData> {
         (None, None) => None,
     };
 
-    let lens = ascii_exif(&exif, Tag::LensModel);
+    let lens = ascii_exif(&exif, Tag::LensModel)
+        .or_else(|| exiftool_lens(path, cache_dir));
 
     let aperture = rational_exif(&exif, Tag::FNumber)
         .map(format_aperture)
@@ -390,7 +432,7 @@ fn read_dimensions(path: &Path) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
-fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
+fn collect_media(dir: &Path, cache_dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     let entries = std::fs::read_dir(dir).map_err(|e| ContentError::Io {
         path: dir.to_owned(),
         source: e,
@@ -411,7 +453,7 @@ fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
         })
         .map(|p| {
             let is_video = is_video(&p);
-            let exif = if is_video { None } else { read_exif(&p) };
+            let exif = if is_video { None } else { read_exif(&p, cache_dir) };
             let dimensions = if is_video { None } else { read_dimensions(&p) };
             MediaItem { path: p, is_video, exif, dimensions }
         })
@@ -420,7 +462,7 @@ fn collect_media(dir: &Path) -> Result<Vec<MediaItem>, ContentError> {
     Ok(items)
 }
 
-fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
+fn discover_photo_groups(post_dir: &Path, cache_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(post_dir)
         .map_err(|e| ContentError::Io {
             path: post_dir.to_owned(),
@@ -437,7 +479,7 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
         let path = entry.path();
         if path.is_dir() {
             let folder_name = entry.file_name().to_string_lossy().into_owned();
-            let media = collect_media(&path)?;
+            let media = collect_media(&path, cache_dir)?;
             let (title_override, body_html) = parse_section(&path).unwrap_or((None, None));
             let name = title_override.unwrap_or(folder_name);
             if !media.is_empty() || body_html.is_some() {
@@ -449,7 +491,7 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
             info!(path = %path.display(), "ingesting web-optimized video");
             flat_media.push(MediaItem { path, is_video: true, exif: None, dimensions: None });
         } else if is_photo(&path) {
-            let exif = read_exif(&path);
+            let exif = read_exif(&path, cache_dir);
             let dimensions = read_dimensions(&path);
             flat_media.push(MediaItem { path, is_video: false, exif, dimensions });
         }
@@ -467,7 +509,7 @@ fn discover_photo_groups(post_dir: &Path) -> Result<Vec<PhotoGroup>, ContentErro
     Ok(groups)
 }
 
-pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
+pub fn parse_post(post_dir: &Path, cache_dir: &Path) -> Result<Post, ContentError> {
     let index_path = post_dir.join("index.md");
     let content = std::fs::read_to_string(&index_path).map_err(|e| ContentError::Io {
         path: index_path.clone(),
@@ -492,7 +534,7 @@ pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
         .unwrap_or_default();
     let slug = slug_from_dir_name(&dir_name);
     let body_html = render_markdown(body);
-    let photo_groups = discover_photo_groups(post_dir)?;
+    let photo_groups = discover_photo_groups(post_dir, cache_dir)?;
     let cover = fm.cover.map(|c| {
         // Search discovered media for a file whose name matches `c`, so the
         // frontmatter value only needs to be the filename regardless of which
@@ -531,7 +573,7 @@ pub fn parse_post(post_dir: &Path) -> Result<Post, ContentError> {
 /// # Errors
 ///
 /// Returns [`ContentError`] if any post directory cannot be read or parsed.
-pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
+pub fn load_site(posts_dir: &Path, cache_dir: &Path) -> Result<Site, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
         .map_err(|e| ContentError::Io {
             path: posts_dir.to_owned(),
@@ -544,7 +586,7 @@ pub fn load_site(posts_dir: &Path) -> Result<Site, ContentError> {
 
     let mut posts = Vec::with_capacity(entries.len());
     for entry in entries {
-        posts.push(parse_post(&entry.path())?);
+        posts.push(parse_post(&entry.path(), cache_dir)?);
     }
     posts.sort_by(|a, b| a.date.cmp(&b.date));
 
@@ -644,7 +686,7 @@ mod tests {
             "## Day 1\n\nWe arrived.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), tmp.path()).unwrap();
 
         assert_eq!(post.slug, "2025-03-18-hawaii");
         assert_eq!(post.title, "Hawaii Trip");
@@ -664,7 +706,7 @@ mod tests {
             "Work in progress.",
         );
 
-        let post = parse_post(&tmp.path().join("2025-05-01 Draft")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-05-01 Draft"), tmp.path()).unwrap();
 
         assert!(post.is_draft());
         assert!(post.access.is_empty());
@@ -684,7 +726,7 @@ mod tests {
         make_photo(&post_dir.join("2025-03-18 Travel day"), "b.jpg");
         make_photo(&post_dir.join("2025-03-19 Hiking"), "c.jpg");
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         assert_eq!(post.photo_groups.len(), 2);
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
@@ -706,7 +748,7 @@ mod tests {
         make_photo(&post_dir, "photo1.jpg");
         make_photo(&post_dir, "photo2.jpg");
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "");
@@ -731,7 +773,7 @@ mod tests {
         )
         .unwrap();
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "Travel Day");
@@ -756,7 +798,7 @@ mod tests {
         )
         .unwrap();
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
         assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("Just a body"));
@@ -772,7 +814,7 @@ mod tests {
             "",
         );
 
-        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii")).unwrap();
+        let post = parse_post(&tmp.path().join("2025-03-18 Hawaii"), tmp.path()).unwrap();
 
         assert!(post.photo_groups.is_empty());
     }
@@ -793,7 +835,7 @@ mod tests {
             "",
         );
 
-        let site = load_site(tmp.path()).unwrap();
+        let site = load_site(tmp.path(), tmp.path()).unwrap();
 
         assert_eq!(site.posts.len(), 2);
         assert_eq!(site.posts[0].date, "2025-01-01");
@@ -817,7 +859,7 @@ mod tests {
         make_photo(&post_dir.join("Day 1"), "safe2.jpg");
         make_photo(&post_dir.join("Day 1"), "day1-NSFW.jpg");
 
-        let post = parse_post(&post_dir).unwrap();
+        let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         let flat = post.photo_groups.iter().find(|g| g.name.is_empty()).unwrap();
         assert_eq!(flat.media.len(), 1);
@@ -831,7 +873,7 @@ mod tests {
     #[test]
     fn load_site_empty_directory() {
         let tmp = TempDir::new().unwrap();
-        let site = load_site(tmp.path()).unwrap();
+        let site = load_site(tmp.path(), tmp.path()).unwrap();
         assert!(site.posts.is_empty());
     }
 }
