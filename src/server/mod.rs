@@ -444,6 +444,7 @@ async fn admin_reload_handler(
     let cache_dir = state.cfg.cache_dir.clone();
     let concurrency = state.cfg.preprocess_concurrency;
     let site = Arc::clone(&state.site);
+    info!(user = ?viewer.username, "manual reload triggered");
     tokio::spawn(async move {
         match load_posts(posts_dir, cache_dir, concurrency, site).await {
             Ok(count) => info!(count, "finished reloading posts"),
