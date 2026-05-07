@@ -61,6 +61,7 @@ impl axum::extract::FromRef<AppState> for Key {
 pub fn router(state: AppState, static_dir: PathBuf) -> Router {
     Router::new()
         .route("/", get(index_handler))
+        .route("/groups/{name}", get(group_handler))
         .route("/posts/{slug}", get(post_handler))
         .route("/media/{post}/{*path}", get(media_handler))
         .route("/feed/{token}", get(feed_handler))
@@ -143,6 +144,20 @@ async fn index_handler(
     let viewer = viewer_from_jar(&jar, &state.users);
     let site = state.site.load_full();
     match state.theme.render_index(&site, &viewer) {
+        Ok(html) => html_response(html, &request_headers),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn group_handler(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar,
+    request_headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
+    let viewer = viewer_from_jar(&jar, &state.users);
+    let site = state.site.load_full();
+    match state.theme.render_group_index(&site, &viewer, &name) {
         Ok(html) => html_response(html, &request_headers),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

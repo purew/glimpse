@@ -61,6 +61,19 @@ impl Theme {
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
     pub fn render_index(&self, site: &Site, viewer: &Viewer) -> Result<String, ThemeError> {
+        self.render_index_filtered(site, viewer, None)
+    }
+
+    /// Render the post-listing index page filtered to a specific access group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
+    pub fn render_group_index(&self, site: &Site, viewer: &Viewer, group: &str) -> Result<String, ThemeError> {
+        self.render_index_filtered(site, viewer, Some(group))
+    }
+
+    fn render_index_filtered(&self, site: &Site, viewer: &Viewer, group_filter: Option<&str>) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("index.html")
@@ -70,11 +83,12 @@ impl Theme {
             })?;
 
         let mut posts: Vec<PostSummaryCtx> = visible(site, viewer)
+            .filter(|p| group_filter.is_none_or(|g| p.access.iter().any(|a| a == g)))
             .map(PostSummaryCtx::from_post)
             .collect();
         posts.reverse();
 
-        tmpl.render(context! { posts, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
+        tmpl.render(context! { posts, group_filter, is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render {
                 name: "index.html",
                 source: e,

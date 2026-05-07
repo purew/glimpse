@@ -71,7 +71,7 @@
   <div class="post-meta">
     <span>Posted on <time class="post-date" datetime="{{ post.date }}">{{ post.date }}</time></span>
     {% if post.access %}
-    <span class="post-access">accessible to {{ post.access | join(", ") }}</span>
+    <span class="post-access">accessible to {% for group in post.access %}{% if not loop.first %}, {% endif %}<a href="/groups/{{ group }}">{{ group }}</a>{% endfor %}</span>
     {% endif %}
   </div>
 </article>

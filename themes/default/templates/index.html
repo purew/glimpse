@@ -3,6 +3,11 @@
 {% block title %}{{ site_title }}{% endblock %}
 
 {% block content %}
+{% if group_filter %}
+<div class="group-filter-header">
+  Posts accessible to <strong>{{ group_filter }}</strong> · <a href="/">all posts</a>
+</div>
+{% endif %}
 <div class="post-grid">
   {% for post in posts %}
   <article class="post-card{% if post.is_draft %} post-card--draft{% endif %}">
@@ -41,7 +46,7 @@
       <div class="post-card-meta">
         <time class="post-card-date" datetime="{{ post.date }}">{{ post.date }}</time>
         {% if post.access %}
-        <span class="post-card-access">{{ post.access | join(", ") }}</span>
+        <span class="post-card-access">{% for group in post.access %}{% if not loop.first %}, {% endif %}<a href="/groups/{{ group }}">{{ group }}</a>{% endfor %}</span>
         {% endif %}
       </div>
     </div>
