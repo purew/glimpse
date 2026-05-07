@@ -5,7 +5,6 @@ mod server;
 mod theme;
 mod users;
 mod viewer;
-mod watcher;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,7 +50,6 @@ async fn main() -> anyhow::Result<()> {
     // site is loaded in the background and swapped in when ready.
     let site = Arc::new(ArcSwap::from_pointee(content::Site { posts: vec![] }));
     let media_cache = Arc::new(MediaCache::new(cache_dir.clone()));
-    watcher::spawn(posts_dir.clone(), Arc::clone(&site), Arc::clone(&media_cache), Arc::clone(&cfg));
 
     let addr = cfg.listen;
     let load_posts_dir = cfg.posts_dir.clone();

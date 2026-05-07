@@ -13,7 +13,7 @@ use axum::{
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
-use tracing::info;
+use tracing::{error, info};
 use serde::Deserialize;
 use tower_http::services::ServeDir;
 
@@ -322,13 +322,37 @@ async fn admin_reload_handler(
     if !viewer.is_admin() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match content::load_site(&state.posts_dir, &state.cfg.cache_dir) {
-        Ok(site) => {
-            state.site.store(Arc::new(site));
-            Redirect::to("/").into_response()
+    let posts_dir = state.posts_dir.clone();
+    let cache_dir = state.cfg.cache_dir.clone();
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let mut entries: Vec<_> = std::fs::read_dir(&posts_dir)
+                .map_err(|e| content::ContentError::Io { path: posts_dir.clone(), source: e })?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+
+            let mut posts: Vec<content::Post> = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let t = std::time::Instant::now();
+                let post = content::parse_post(&entry.path(), &cache_dir)?;
+                let slug = post.slug.clone();
+                posts.push(post);
+                posts.sort_by(|a, b| a.date.cmp(&b.date));
+                state.site.store(Arc::new(content::Site { posts: posts.clone() }));
+                info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
+            }
+            Ok::<_, content::ContentError>(posts.len())
+        }).await;
+
+        match result {
+            Ok(Ok(count)) => info!(count, "finished reloading posts"),
+            Ok(Err(e)) => error!("failed to reload site: {e:#}"),
+            Err(e) => error!("site reload panicked: {e}"),
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
+    });
+    Redirect::to("/").into_response()
 }
 
 #[derive(Deserialize)]

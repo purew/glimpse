@@ -15,8 +15,6 @@ pub struct Config {
     pub posts_dir: PathBuf,
     /// Directory where generated image/video derivatives are cached.
     pub cache_dir: PathBuf,
-    /// Maximum number of image derivatives generated concurrently during a reload.
-    pub preprocess_concurrency: usize,
 }
 
 impl Default for Config {
@@ -26,7 +24,6 @@ impl Default for Config {
             site_title: "Glimpse".to_owned(),
             posts_dir: PathBuf::from("posts"),
             cache_dir: PathBuf::from("cache"),
-            preprocess_concurrency: 2,
         }
     }
 }

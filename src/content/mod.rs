@@ -564,35 +564,6 @@ pub fn parse_post(post_dir: &Path, cache_dir: &Path) -> Result<Post, ContentErro
     })
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/// Scan `posts_dir` and return a fully-parsed [`Site`].
-///
-/// Posts are sorted ascending by date string (ISO 8601 sorts lexicographically).
-///
-/// # Errors
-///
-/// Returns [`ContentError`] if any post directory cannot be read or parsed.
-pub fn load_site(posts_dir: &Path, cache_dir: &Path) -> Result<Site, ContentError> {
-    let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
-        .map_err(|e| ContentError::Io {
-            path: posts_dir.to_owned(),
-            source: e,
-        })?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    let mut posts = Vec::with_capacity(entries.len());
-    for entry in entries {
-        posts.push(parse_post(&entry.path(), cache_dir)?);
-    }
-    posts.sort_by(|a, b| a.date.cmp(&b.date));
-
-    Ok(Site { posts })
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -602,6 +573,21 @@ mod tests {
     use tempfile::TempDir;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    fn load_site(posts_dir: &Path, cache_dir: &Path) -> Result<Site, ContentError> {
+        let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
+            .map_err(|e| ContentError::Io { path: posts_dir.to_owned(), source: e })?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        let mut posts = Vec::with_capacity(entries.len());
+        for entry in entries {
+            posts.push(parse_post(&entry.path(), cache_dir)?);
+        }
+        posts.sort_by(|a, b| a.date.cmp(&b.date));
+        Ok(Site { posts })
+    }
 
     fn make_post(tmp: &TempDir, dir_name: &str, frontmatter: &str, body: &str) -> PathBuf {
         let post_dir = tmp.path().join(dir_name);
