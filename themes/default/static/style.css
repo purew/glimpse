@@ -476,6 +476,32 @@ main {
   box-shadow: 0 0 0 3px rgba(38, 139, 210, 0.2);
 }
 
+.password-wrapper {
+  position: relative;
+}
+
+.password-wrapper input {
+  padding-right: 3.5rem;
+}
+
+.btn-show-password {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0.2rem 0.3rem;
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-show-password:hover {
+  color: var(--color-text);
+}
+
 .btn-primary {
   display: block;
   width: 100%;

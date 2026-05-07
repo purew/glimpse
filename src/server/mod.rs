@@ -491,13 +491,17 @@ async fn login_post_handler(
         let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
         (updated_jar, Redirect::to(destination)).into_response()
     } else {
+        tracing::warn!(username = %form.username, "login failed: invalid credentials");
         let next = form.next.as_deref().filter(|p| is_safe_redirect(p));
         match state
             .theme
             .render_login(Some("Invalid username or password"), next)
         {
             Ok(html) => (StatusCode::UNAUTHORIZED, Html(html)).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            Err(e) => {
+                tracing::warn!(error = %e, "login failed: could not render login page");
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            }
         }
     }
 }
