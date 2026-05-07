@@ -17,6 +17,8 @@ use tracing::{error, info};
 use serde::Deserialize;
 use tower_http::services::ServeDir;
 
+use anyhow::Context;
+
 use crate::config::Config;
 use crate::content::{self, Site};
 use crate::media::{ImageSize, MediaCache};
@@ -37,14 +39,14 @@ const SESSION_USER_KEY: &str = "username";
 // ── App state ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct AppState {
-    pub site: Arc<ArcSwap<Site>>,
-    pub theme: Arc<Theme>,
-    pub media_cache: Arc<MediaCache>,
-    pub users: Arc<Users>,
-    pub cookie_key: Key,
-    pub posts_dir: std::path::PathBuf,
-    pub cfg: Arc<Config>,
+struct AppState {
+    site: Arc<ArcSwap<Site>>,
+    theme: Arc<Theme>,
+    media_cache: Arc<MediaCache>,
+    users: Arc<Users>,
+    cookie_key: Key,
+    posts_dir: std::path::PathBuf,
+    cfg: Arc<Config>,
 }
 
 impl axum::extract::FromRef<AppState> for Key {
@@ -55,10 +57,7 @@ impl axum::extract::FromRef<AppState> for Key {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-/// Build the application router.
-///
-/// `static_dir` is the directory served under `/static/` (theme CSS, fonts, etc.).
-pub fn router(state: AppState, static_dir: PathBuf) -> Router {
+fn router(state: AppState, static_dir: PathBuf) -> Router {
     Router::new()
         .route("/", get(index_handler))
         .route("/groups/{name}", get(group_handler))
@@ -72,6 +71,99 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
         .fallback(not_found_handler)
         .with_state(state)
 }
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+pub async fn run(config_path: PathBuf, users_path: PathBuf) -> anyhow::Result<()> {
+    let cfg = Arc::new(Config::load(&config_path).context("failed to load config")?);
+
+    let posts_dir = cfg.posts_dir.clone();
+    let cache_dir = cfg.cache_dir.clone();
+    let theme_dir = std::env::var("GLIMPSE_THEME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("themes/default"));
+
+    let theme = Theme::load(&theme_dir, cfg.site_title.clone());
+    let users = Users::load(&users_path).context("failed to load users")?;
+    let cookie_key = key_from_env().context("failed to load session key")?;
+
+    let site = Arc::new(ArcSwap::from_pointee(Site { posts: vec![] }));
+    let media_cache = Arc::new(MediaCache::new(cache_dir.clone()));
+
+    let addr = cfg.listen;
+    let load_posts_dir = cfg.posts_dir.clone();
+    let state = AppState {
+        site: Arc::clone(&site),
+        theme: Arc::new(theme),
+        media_cache,
+        users: Arc::new(users),
+        cookie_key,
+        posts_dir,
+        cfg,
+    };
+
+    let app = router(state, theme_dir.join("static"));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!(%addr, "listening");
+
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let mut entries: Vec<_> = std::fs::read_dir(&load_posts_dir)
+                .map_err(|e| content::ContentError::Io { path: load_posts_dir.clone(), source: e })?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+
+            let mut posts: Vec<content::Post> = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let t = std::time::Instant::now();
+                let post = content::parse_post(&entry.path(), &cache_dir)?;
+                let slug = post.slug.clone();
+                posts.push(post);
+                posts.sort_by(|a, b| a.date.cmp(&b.date));
+                site.store(Arc::new(Site { posts: posts.clone() }));
+                info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
+            }
+            Ok::<_, content::ContentError>(posts.len())
+        }).await;
+
+        match result {
+            Ok(Ok(count)) => info!(count, "finished loading posts"),
+            Ok(Err(e)) => error!("failed to load site: {e:#}"),
+            Err(e) => error!("site loader panicked: {e}"),
+        }
+    });
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+fn key_from_env() -> anyhow::Result<Key> {
+    let hex = std::env::var("GLIMPSE_SESSION_SECRET")
+        .context("GLIMPSE_SESSION_SECRET env var not set (generate with: openssl rand -hex 64)")?;
+    let bytes = decode_hex(&hex)
+        .context("GLIMPSE_SESSION_SECRET must be a 128-character hex string (64 bytes)")?;
+    anyhow::ensure!(
+        bytes.len() == 64,
+        "GLIMPSE_SESSION_SECRET must be exactly 64 bytes (128 hex chars), got {}",
+        bytes.len()
+    );
+    Ok(Key::from(&bytes))
+}
+
+fn decode_hex(s: &str) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(s.len().is_multiple_of(2), "odd-length hex string");
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .with_context(|| format!("invalid hex at position {i}"))
+        })
+        .collect()
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
 
 fn not_found_response(theme: &Theme, viewer: &Viewer) -> Response {
     match theme.render_not_found(viewer) {

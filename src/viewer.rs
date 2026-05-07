@@ -11,6 +11,7 @@ pub struct Viewer {
 }
 
 impl Viewer {
+    #[cfg(test)]
     pub fn admin() -> Self {
         Self {
             groups: vec!["admin".to_owned()],
