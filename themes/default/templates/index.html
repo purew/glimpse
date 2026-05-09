@@ -15,18 +15,18 @@
     <span class="badge-draft">DRAFT</span>
     {% endif %}
 
-    {% if post.cover %}
+    {% if post.covers | length == 1 %}
     <a href="/posts/{{ post.slug }}" class="post-card-cover">
       <img
-        src="{{ post.cover.medium }}"
-        srcset="{{ post.cover.thumb }} 400w, {{ post.cover.medium }} 1200w"
+        src="{{ post.covers[0].medium }}"
+        srcset="{{ post.covers[0].thumb }} 400w, {{ post.covers[0].medium }} 1200w"
         sizes="(max-width: 640px) calc(100vw - 2rem), 320px"
         alt="{{ post.title }}" loading="lazy">
     </a>
-    {% elif post.preview_photos %}
+    {% elif post.covers %}
     <a href="/posts/{{ post.slug }}" class="post-card-cover">
-      <div class="post-card-collage post-card-collage--{{ post.preview_photos | length }}">
-        {% for photo in post.preview_photos %}
+      <div class="post-card-collage post-card-collage--{{ post.covers | length }}">
+        {% for photo in post.covers %}
         <div class="collage-img">
           <img src="{{ photo.thumb }}" alt="{{ post.title }}" loading="lazy">
         </div>

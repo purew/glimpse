@@ -88,7 +88,8 @@ pub(crate) struct Post {
     pub(crate) date: String,
     /// Groups allowed to view this post. Empty = draft (admin-only).
     pub(crate) access: Vec<String>,
-    pub(crate) cover: Option<PathBuf>,
+    /// Explicitly designated cover images (1–3). Empty means auto-select from photos.
+    pub(crate) covers: Vec<PathBuf>,
     /// Markdown body pre-rendered to HTML at load time.
     pub(crate) body_html: String,
     pub(crate) photo_groups: Vec<PhotoGroup>,
@@ -116,7 +117,40 @@ struct Frontmatter {
     date: serde_yaml::Value, // accept both bare dates and quoted strings
     #[serde(default)]
     access: Vec<String>,
-    cover: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_one_or_many_strings")]
+    cover: Vec<String>,
+}
+
+fn deserialize_one_or_many_strings<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    use std::fmt;
+
+    struct OneOrMany;
+
+    impl<'de> Visitor<'de> for OneOrMany {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a string or list of strings")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Vec<String>, E> {
+            Ok(vec![v.to_owned()])
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut out = Vec::new();
+            while let Some(s) = seq.next_element()? {
+                out.push(s);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(OneOrMany)
 }
 
 /// Optional frontmatter for a section `index.md` inside a post subfolder.
@@ -535,29 +569,34 @@ pub(crate) fn parse_post(post_dir: &Path, cache_dir: &Path) -> Result<Post, Cont
     let slug = slug_from_dir_name(&dir_name);
     let body_html = render_markdown(body);
     let photo_groups = discover_photo_groups(post_dir, cache_dir)?;
-    let cover = fm.cover.map(|c| {
-        // Search discovered media for a file whose name matches `c`, so the
-        // frontmatter value only needs to be the filename regardless of which
-        // subfolder it lives in.
-        match photo_groups
-            .iter()
-            .flat_map(|g| g.media.iter())
-            .find(|item| item.path.file_name().is_some_and(|n| n == c.as_str()))
-        {
-            Some(item) => item.path.clone(),
-            None => {
-                warn!(post = %slug, cover = %c, "cover photo not found among discovered media");
-                post_dir.join(&c)
+    let covers: Vec<PathBuf> = fm
+        .cover
+        .iter()
+        .take(3)
+        .map(|c| {
+            // Search discovered media for a file whose name matches `c`, so the
+            // frontmatter value only needs to be the filename regardless of which
+            // subfolder it lives in.
+            match photo_groups
+                .iter()
+                .flat_map(|g| g.media.iter())
+                .find(|item| item.path.file_name().is_some_and(|n| n == c.as_str()))
+            {
+                Some(item) => item.path.clone(),
+                None => {
+                    warn!(post = %slug, cover = %c, "cover photo not found among discovered media");
+                    post_dir.join(c)
+                }
             }
-        }
-    });
+        })
+        .collect();
 
     Ok(Post {
         slug,
         title: fm.title,
         date,
         access: fm.access,
-        cover,
+        covers,
         body_html,
         photo_groups,
         source_dir: post_dir.to_owned(),

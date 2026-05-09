@@ -397,36 +397,37 @@ struct PostSummaryCtx {
     date: String,
     is_draft: bool,
     access: Vec<String>,
-    cover: Option<MediaCtx>,
+    /// Cover images to display: explicit covers (1–3) when set, otherwise auto-selected
+    /// first 3 non-video photos.
+    covers: Vec<MediaCtx>,
     photo_count: usize,
-    /// Up to 3 non-video photos used for the collage preview when no cover is set.
-    preview_photos: Vec<MediaCtx>,
 }
 
 impl PostSummaryCtx {
     fn from_post(post: &Post) -> Self {
         let photo_count = post.photo_groups.iter().map(|g| g.media.len()).sum();
-        let cover = post
-            .cover
-            .as_deref()
-            .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p));
-        let preview_photos: Vec<MediaCtx> = post
-            .photo_groups
-            .iter()
-            .flat_map(|g| g.media.iter())
-            .filter(|item| !item.is_video)
-            .take(3)
-            .map(|item| MediaCtx::from_item(&post.slug, &post.source_dir, item))
-            .collect();
+        let covers: Vec<MediaCtx> = if post.covers.is_empty() {
+            post.photo_groups
+                .iter()
+                .flat_map(|g| g.media.iter())
+                .filter(|item| !item.is_video)
+                .take(3)
+                .map(|item| MediaCtx::from_item(&post.slug, &post.source_dir, item))
+                .collect()
+        } else {
+            post.covers
+                .iter()
+                .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p))
+                .collect()
+        };
         Self {
             slug: post.slug.clone(),
             title: post.title.clone(),
             date: post.date.clone(),
             is_draft: post.is_draft(),
             access: post.access.clone(),
-            cover,
+            covers,
             photo_count,
-            preview_photos,
         }
     }
 }
@@ -505,16 +506,17 @@ struct PostDetailCtx {
     is_draft: bool,
     access: Vec<String>,
     body_html: String,
-    cover: Option<MediaCtx>,
+    covers: Vec<MediaCtx>,
     photo_groups: Vec<PhotoGroupCtx>,
 }
 
 impl PostDetailCtx {
     fn from_post(post: &Post) -> Self {
-        let cover = post
-            .cover
-            .as_deref()
-            .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p));
+        let covers: Vec<MediaCtx> = post
+            .covers
+            .iter()
+            .map(|p| MediaCtx::from_photo_path(&post.slug, &post.source_dir, p))
+            .collect();
         let photo_groups = post
             .photo_groups
             .iter()
@@ -539,7 +541,7 @@ impl PostDetailCtx {
             is_draft: post.is_draft(),
             access: post.access.clone(),
             body_html: post.body_html.clone(),
-            cover,
+            covers,
             photo_groups,
         }
     }
@@ -561,7 +563,7 @@ mod tests {
             title: title.into(),
             date: "2025-01-01".into(),
             access: access.into_iter().map(str::to_owned).collect(),
-            cover: None,
+            covers: vec![],
             body_html: format!("<p>{body_md}</p>"),
             photo_groups: vec![],
             source_dir: PathBuf::from("/posts").join(slug),
@@ -576,7 +578,7 @@ mod tests {
             title: "With Photos".into(),
             date: "2025-02-01".into(),
             access: vec!["family".into()],
-            cover: None,
+            covers: vec![],
             body_html: String::new(),
             photo_groups: vec![PhotoGroup {
                 name: "Day 1".into(),

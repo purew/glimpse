@@ -83,7 +83,7 @@ mod tests {
             title: "Test".into(),
             date: "2025-01-01".into(),
             access: access.into_iter().map(str::to_owned).collect(),
-            cover: None,
+            covers: vec![],
             body_html: String::new(),
             photo_groups: vec![],
             source_dir: PathBuf::from("."),
