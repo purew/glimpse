@@ -7,6 +7,7 @@ use arc_swap::ArcSwap;
 
 use axum::{
     Form, Router,
+    body::Body,
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
@@ -367,6 +368,7 @@ async fn media_handler(
     jar: PrivateCookieJar,
     Path((post_slug, file_path)): Path<(String, String)>,
     Query(params): Query<MediaParams>,
+    req_headers: HeaderMap,
 ) -> Response {
     if !is_safe_subpath(&file_path) {
         return StatusCode::NOT_FOUND.into_response();
@@ -424,17 +426,7 @@ async fn media_handler(
     } else {
         "private, max-age=3600"
     };
-    match tokio::fs::read(&source).await {
-        Ok(bytes) => (
-            [
-                (header::CONTENT_TYPE, content_type),
-                (header::CACHE_CONTROL, cache_control),
-            ],
-            bytes,
-        )
-            .into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
+    serve_file_with_range(&source, content_type, cache_control, req_headers.get(header::RANGE)).await
 }
 
 async fn admin_reload_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
@@ -514,6 +506,94 @@ async fn logout_handler(jar: PrivateCookieJar) -> Response {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+async fn serve_file_with_range(
+    path: &std::path::Path,
+    content_type: &'static str,
+    cache_control: &'static str,
+    range_header: Option<&HeaderValue>,
+) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(m) => m,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let total = metadata.len();
+
+    if total == 0 {
+        return axum::http::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CACHE_CONTROL, cache_control)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_LENGTH, 0u64)
+            .body(Body::empty())
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    }
+
+    let range = range_header
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| parse_byte_range(s, total));
+
+    let (start, end, status) = match range {
+        Some((s, e)) => (s, e, StatusCode::PARTIAL_CONTENT),
+        None => (0, total - 1, StatusCode::OK),
+    };
+
+    let chunk_len = end - start + 1;
+
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    let mut buf = Vec::with_capacity(chunk_len as usize);
+    if file.take(chunk_len).read_to_end(&mut buf).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    let actual_len = buf.len() as u64;
+    let mut builder = axum::http::Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, actual_len);
+
+    if status == StatusCode::PARTIAL_CONTENT {
+        let actual_end = start + actual_len.saturating_sub(1);
+        builder = builder.header(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{actual_end}/{total}"),
+        );
+    }
+
+    builder
+        .body(Body::from(buf))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// Parses a `bytes=start-end` or `bytes=start-` range header value.
+/// Clamps the end to `total - 1` and returns `None` for invalid or unsatisfiable ranges.
+fn parse_byte_range(range: &str, total: u64) -> Option<(u64, u64)> {
+    let s = range.strip_prefix("bytes=")?;
+    let (start_str, end_str) = s.split_once('-')?;
+    let start: u64 = start_str.parse().ok()?;
+    let end: u64 = if end_str.is_empty() {
+        total - 1
+    } else {
+        end_str.parse::<u64>().ok()?.min(total - 1)
+    };
+    if start > end {
+        return None;
+    }
+    Some((start, end))
+}
 
 /// Returns `true` only when every component of `path` is a plain file/dir name —
 /// no `..`, no absolute root, no prefix components.
