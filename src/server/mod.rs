@@ -13,9 +13,10 @@ use axum::{
     routing::{get, post},
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
-use tracing::{error, info};
 use serde::Deserialize;
+use time::Duration;
 use tower_http::services::ServeDir;
+use tracing::{error, info};
 
 use anyhow::Context;
 
@@ -183,7 +184,9 @@ async fn load_posts(
         let slug = post.slug.clone();
         posts.push(post);
         posts.sort_by(|a, b| a.date.cmp(&b.date));
-        site.store(Arc::new(Site { posts: posts.clone() }));
+        site.store(Arc::new(Site {
+            posts: posts.clone(),
+        }));
         info!(%slug, elapsed_ms = t.elapsed().as_millis(), "post ready");
     }
     Ok(posts.len())
@@ -208,9 +211,7 @@ async fn not_found_handler(State(state): State<AppState>, jar: PrivateCookieJar)
 fn viewer_from_jar(jar: &PrivateCookieJar, users: &Users) -> Viewer {
     let username = jar.get(SESSION_USER_KEY).map(|c| c.value().to_owned());
     match username.and_then(|u| users.get(&u).map(|user| (u, user))) {
-        Some((name, user)) => {
-            Viewer::with_groups_and_username(user.groups.iter().cloned(), name)
-        }
+        Some((name, user)) => Viewer::with_groups_and_username(user.groups.iter().cloned(), name),
         None => Viewer::public(),
     }
 }
@@ -220,6 +221,7 @@ fn session_cookie(name: &'static str, value: String) -> Cookie<'static> {
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
+        .max_age(Duration::days(90))
         .build()
 }
 
@@ -291,8 +293,7 @@ async fn post_handler(
     let site = state.site.load_full();
     let Some(post) = visible(&site, &viewer).find(|p| p.slug == slug) else {
         // If the post exists and the viewer is unauthenticated, redirect to login.
-        let exists_but_restricted = !viewer.logged_in
-            && site.posts.iter().any(|p| p.slug == slug);
+        let exists_but_restricted = !viewer.logged_in && site.posts.iter().any(|p| p.slug == slug);
         if exists_but_restricted {
             let next = format!("/posts/{slug}");
             return Redirect::to(&format!("/login?next={next}")).into_response();
@@ -418,7 +419,11 @@ async fn media_handler(
     }
 
     let content_type = media_content_type(&source);
-    let cache_control = if is_public { "public, max-age=3600" } else { "private, max-age=3600" };
+    let cache_control = if is_public {
+        "public, max-age=3600"
+    } else {
+        "private, max-age=3600"
+    };
     match tokio::fs::read(&source).await {
         Ok(bytes) => (
             [
@@ -432,10 +437,7 @@ async fn media_handler(
     }
 }
 
-async fn admin_reload_handler(
-    State(state): State<AppState>,
-    jar: PrivateCookieJar,
-) -> Response {
+async fn admin_reload_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
     let viewer = viewer_from_jar(&jar, &state.users);
     if !viewer.is_admin() {
         return StatusCode::FORBIDDEN.into_response();
@@ -579,7 +581,12 @@ mod tests {
             photo_groups: vec![PhotoGroup {
                 name: String::new(),
                 body_html: None,
-                media: vec![MediaItem { path: source_dir.join("img.jpg"), is_video: false, exif: None, dimensions: None }],
+                media: vec![MediaItem {
+                    path: source_dir.join("img.jpg"),
+                    is_video: false,
+                    exif: None,
+                    dimensions: None,
+                }],
             }],
             source_dir: source_dir.to_owned(),
         }
@@ -595,7 +602,10 @@ mod tests {
     fn test_state(posts: Vec<Post>, cache_dir: PathBuf) -> AppState {
         AppState {
             site: Arc::new(ArcSwap::from_pointee(Site { posts })),
-            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR), "Glimpse".to_owned())),
+            theme: Arc::new(crate::theme::Theme::load(
+                Path::new(THEME_DIR),
+                "Glimpse".to_owned(),
+            )),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(crate::users::Users::default()),
             cookie_key: Key::generate(),
@@ -611,7 +621,10 @@ mod tests {
     ) -> AppState {
         AppState {
             site: Arc::new(ArcSwap::from_pointee(Site { posts })),
-            theme: Arc::new(crate::theme::Theme::load(Path::new(THEME_DIR), "Glimpse".to_owned())),
+            theme: Arc::new(crate::theme::Theme::load(
+                Path::new(THEME_DIR),
+                "Glimpse".to_owned(),
+            )),
             media_cache: Arc::new(MediaCache::new(cache_dir)),
             users: Arc::new(users),
             cookie_key: Key::generate(),

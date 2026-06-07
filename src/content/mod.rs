@@ -200,11 +200,19 @@ fn parse_section(dir: &Path) -> Option<(Option<String>, Option<String>)> {
             let title = serde_yaml::from_str::<SectionFrontmatter>(yaml)
                 .ok()
                 .and_then(|fm| fm.title);
-            let body_html = if body.trim().is_empty() { None } else { Some(render_markdown(body)) };
+            let body_html = if body.trim().is_empty() {
+                None
+            } else {
+                Some(render_markdown(body))
+            };
             (title, body_html)
         }
         Err(_) => {
-            let body_html = if content.trim().is_empty() { None } else { Some(render_markdown(&content)) };
+            let body_html = if content.trim().is_empty() {
+                None
+            } else {
+                Some(render_markdown(&content))
+            };
             (None, body_html)
         }
     };
@@ -303,7 +311,11 @@ fn format_aperture(r: exif::Rational) -> String {
         return String::new();
     }
     let value = f64::from(r.num) / f64::from(r.denom);
-    if value.fract() == 0.0 { format!("f/{value:.0}") } else { format!("f/{value:.1}") }
+    if value.fract() == 0.0 {
+        format!("f/{value:.0}")
+    } else {
+        format!("f/{value:.1}")
+    }
 }
 
 fn format_shutter(r: exif::Rational) -> String {
@@ -316,7 +328,11 @@ fn format_shutter(r: exif::Rational) -> String {
     let g = gcd(r.num, r.denom);
     let n = r.num / g;
     let d = r.denom / g;
-    if n == 1 { format!("1/{d}s") } else { format!("{n}/{d}s") }
+    if n == 1 {
+        format!("1/{d}s")
+    } else {
+        format!("{n}/{d}s")
+    }
 }
 
 fn title_case(s: &str) -> String {
@@ -361,7 +377,11 @@ fn exiftool_lens_cache_path(path: &Path, cache_dir: &Path) -> Option<PathBuf> {
     let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
     let mut h = DefaultHasher::new();
     path.hash(&mut h);
-    mtime.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+    mtime
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut h);
     let key = h.finish();
     let exif_cache = cache_dir.join("exif");
     std::fs::create_dir_all(&exif_cache).ok()?;
@@ -415,8 +435,7 @@ fn read_exif(path: &Path, cache_dir: &Path) -> Option<ExifData> {
         (None, None) => None,
     };
 
-    let lens = ascii_exif(&exif, Tag::LensModel)
-        .or_else(|| exiftool_lens(path, cache_dir));
+    let lens = ascii_exif(&exif, Tag::LensModel).or_else(|| exiftool_lens(path, cache_dir));
 
     let aperture = rational_exif(&exif, Tag::FNumber)
         .map(format_aperture)
@@ -457,7 +476,15 @@ fn read_exif(path: &Path, cache_dir: &Path) -> Option<ExifData> {
         return None;
     }
 
-    Some(ExifData { datetime, camera, lens, aperture, shutter, iso, focal_length })
+    Some(ExifData {
+        datetime,
+        camera,
+        lens,
+        aperture,
+        shutter,
+        iso,
+        focal_length,
+    })
 }
 
 fn read_dimensions(path: &Path) -> Option<(u32, u32)> {
@@ -487,16 +514,28 @@ fn collect_media(dir: &Path, cache_dir: &Path) -> Result<Vec<MediaItem>, Content
         })
         .map(|p| {
             let is_video = is_video(&p);
-            let exif = if is_video { None } else { read_exif(&p, cache_dir) };
+            let exif = if is_video {
+                None
+            } else {
+                read_exif(&p, cache_dir)
+            };
             let dimensions = if is_video { None } else { read_dimensions(&p) };
-            MediaItem { path: p, is_video, exif, dimensions }
+            MediaItem {
+                path: p,
+                is_video,
+                exif,
+                dimensions,
+            }
         })
         .collect();
     items.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(items)
 }
 
-fn discover_photo_groups(post_dir: &Path, cache_dir: &Path) -> Result<Vec<PhotoGroup>, ContentError> {
+fn discover_photo_groups(
+    post_dir: &Path,
+    cache_dir: &Path,
+) -> Result<Vec<PhotoGroup>, ContentError> {
     let mut entries: Vec<_> = std::fs::read_dir(post_dir)
         .map_err(|e| ContentError::Io {
             path: post_dir.to_owned(),
@@ -517,27 +556,44 @@ fn discover_photo_groups(post_dir: &Path, cache_dir: &Path) -> Result<Vec<PhotoG
             let (title_override, body_html) = parse_section(&path).unwrap_or((None, None));
             let name = title_override.unwrap_or(folder_name);
             if !media.is_empty() || body_html.is_some() {
-                groups.push(PhotoGroup { name, body_html, media });
+                groups.push(PhotoGroup {
+                    name,
+                    body_html,
+                    media,
+                });
             }
         } else if is_nsfw(&path) {
             info!(path = %path.display(), "skipping nsfw media file");
         } else if is_video(&path) && is_web_optimized(&path) {
             info!(path = %path.display(), "ingesting web-optimized video");
-            flat_media.push(MediaItem { path, is_video: true, exif: None, dimensions: None });
+            flat_media.push(MediaItem {
+                path,
+                is_video: true,
+                exif: None,
+                dimensions: None,
+            });
         } else if is_photo(&path) {
             let exif = read_exif(&path, cache_dir);
             let dimensions = read_dimensions(&path);
-            flat_media.push(MediaItem { path, is_video: false, exif, dimensions });
+            flat_media.push(MediaItem {
+                path,
+                is_video: false,
+                exif,
+                dimensions,
+            });
         }
     }
 
     if !flat_media.is_empty() {
         flat_media.sort_by(|a, b| a.path.cmp(&b.path));
-        groups.insert(0, PhotoGroup {
-            name: String::new(),
-            body_html: None,
-            media: flat_media,
-        });
+        groups.insert(
+            0,
+            PhotoGroup {
+                name: String::new(),
+                body_html: None,
+                media: flat_media,
+            },
+        );
     }
 
     Ok(groups)
@@ -615,7 +671,10 @@ mod tests {
 
     fn load_site(posts_dir: &Path, cache_dir: &Path) -> Result<Site, ContentError> {
         let mut entries: Vec<_> = std::fs::read_dir(posts_dir)
-            .map_err(|e| ContentError::Io { path: posts_dir.to_owned(), source: e })?
+            .map_err(|e| ContentError::Io {
+                path: posts_dir.to_owned(),
+                source: e,
+            })?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
             .collect();
@@ -802,7 +861,13 @@ mod tests {
 
         assert_eq!(post.photo_groups.len(), 1);
         assert_eq!(post.photo_groups[0].name, "Travel Day");
-        assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("We flew in."));
+        assert!(
+            post.photo_groups[0]
+                .body_html
+                .as_deref()
+                .unwrap_or("")
+                .contains("We flew in.")
+        );
     }
 
     #[test]
@@ -826,7 +891,13 @@ mod tests {
         let post = parse_post(&post_dir, tmp.path()).unwrap();
 
         assert_eq!(post.photo_groups[0].name, "2025-03-18 Travel day");
-        assert!(post.photo_groups[0].body_html.as_deref().unwrap_or("").contains("Just a body"));
+        assert!(
+            post.photo_groups[0]
+                .body_html
+                .as_deref()
+                .unwrap_or("")
+                .contains("Just a body")
+        );
     }
 
     #[test]
@@ -886,11 +957,19 @@ mod tests {
 
         let post = parse_post(&post_dir, tmp.path()).unwrap();
 
-        let flat = post.photo_groups.iter().find(|g| g.name.is_empty()).unwrap();
+        let flat = post
+            .photo_groups
+            .iter()
+            .find(|g| g.name.is_empty())
+            .unwrap();
         assert_eq!(flat.media.len(), 1);
         assert!(flat.media[0].path.file_name().unwrap() == "safe.jpg");
 
-        let day1 = post.photo_groups.iter().find(|g| g.name == "Day 1").unwrap();
+        let day1 = post
+            .photo_groups
+            .iter()
+            .find(|g| g.name == "Day 1")
+            .unwrap();
         assert_eq!(day1.media.len(), 1);
         assert!(day1.media[0].path.file_name().unwrap() == "safe2.jpg");
     }

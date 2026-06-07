@@ -77,7 +77,11 @@ impl MediaCache {
     ///
     /// Returns [`MediaError`] if the cache directory cannot be created, the
     /// source image cannot be opened, or the derivative cannot be written.
-    pub(crate) async fn ensure(&self, source: &Path, size: ImageSize) -> Result<PathBuf, MediaError> {
+    pub(crate) async fn ensure(
+        &self,
+        source: &Path,
+        size: ImageSize,
+    ) -> Result<PathBuf, MediaError> {
         let dest = self.derivative_path(source, size)?;
         if dest.exists() {
             return Ok(dest);

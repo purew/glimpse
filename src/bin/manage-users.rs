@@ -82,8 +82,7 @@ fn load_doc(path: &Path) -> anyhow::Result<DocumentMut> {
 }
 
 fn save_doc(path: &Path, doc: &DocumentMut) -> anyhow::Result<()> {
-    std::fs::write(path, doc.to_string())
-        .with_context(|| format!("writing {}", path.display()))
+    std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
 }
 
 // ── TOML helpers ──────────────────────────────────────────────────────────────

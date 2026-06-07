@@ -52,7 +52,11 @@ impl Theme {
         let mut env = Environment::new();
         env.set_loader(path_loader(templates_dir));
         let style_version = hash_file(&theme_dir.join("static").join("style.css"));
-        Self { env, site_title, style_version }
+        Self {
+            env,
+            site_title,
+            style_version,
+        }
     }
 
     /// Render the post-listing index page.
@@ -69,11 +73,21 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub(crate) fn render_group_index(&self, site: &Site, viewer: &Viewer, group: &str) -> Result<String, ThemeError> {
+    pub(crate) fn render_group_index(
+        &self,
+        site: &Site,
+        viewer: &Viewer,
+        group: &str,
+    ) -> Result<String, ThemeError> {
         self.render_index_filtered(site, viewer, Some(group))
     }
 
-    fn render_index_filtered(&self, site: &Site, viewer: &Viewer, group_filter: Option<&str>) -> Result<String, ThemeError> {
+    fn render_index_filtered(
+        &self,
+        site: &Site,
+        viewer: &Viewer,
+        group_filter: Option<&str>,
+    ) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("index.html")
@@ -129,7 +143,10 @@ impl Theme {
         let tmpl = self
             .env
             .get_template("404.html")
-            .map_err(|e| ThemeError::Load { name: "404.html", source: e })?;
+            .map_err(|e| ThemeError::Load {
+                name: "404.html",
+                source: e,
+            })?;
 
         tmpl.render(context! { is_admin => viewer.is_admin(), logged_in => viewer.logged_in, username => &viewer.username, site_title => &self.site_title, style_version => &self.style_version })
             .map_err(|e| ThemeError::Render { name: "404.html", source: e })
@@ -143,7 +160,11 @@ impl Theme {
     /// # Errors
     ///
     /// Returns [`ThemeError`] if the template cannot be loaded or rendered.
-    pub(crate) fn render_login(&self, error: Option<&str>, next: Option<&str>) -> Result<String, ThemeError> {
+    pub(crate) fn render_login(
+        &self,
+        error: Option<&str>,
+        next: Option<&str>,
+    ) -> Result<String, ThemeError> {
         let tmpl = self
             .env
             .get_template("login.html")
@@ -171,7 +192,13 @@ impl Theme {
 /// `token` is the raw (unhashed) feed token for this viewer; it is appended
 /// as `?t=<token>` to every image URL so the media route can authenticate the
 /// request without a cookie.
-pub(crate) fn render_feed(site: &Site, viewer: &Viewer, base_url: &str, token: &str, site_title: &str) -> String {
+pub(crate) fn render_feed(
+    site: &Site,
+    viewer: &Viewer,
+    base_url: &str,
+    token: &str,
+    site_title: &str,
+) -> String {
     let entries: Vec<Entry> = visible(site, viewer)
         .map(|post| feed_entry(post, base_url, token))
         .collect();
@@ -245,7 +272,10 @@ fn entry_content_html(post: &Post, base_url: &str, token: &str) -> String {
             if item.is_video {
                 continue;
             }
-            let rel = item.path.strip_prefix(&post.source_dir).unwrap_or(&item.path);
+            let rel = item
+                .path
+                .strip_prefix(&post.source_dir)
+                .unwrap_or(&item.path);
             let url = format!("{base_url}/media/{}/{}", post.slug, rel.display());
             html.push_str(&format!(
                 "<img src=\"{url}?size=medium&amp;t={token}\" style=\"max-width:100%;display:block\">\n"
@@ -287,8 +317,10 @@ fn hash_file(path: &Path) -> String {
 /// Strips leading words from `lens` that already appear (case-insensitively) in `camera`,
 /// then returns `"camera · remaining_lens"` (or just `camera` if nothing remains).
 fn combine_camera_lens(camera: &str, lens: &str) -> String {
-    let camera_words: std::collections::HashSet<String> =
-        camera.split_whitespace().map(|w| w.to_lowercase()).collect();
+    let camera_words: std::collections::HashSet<String> = camera
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect();
     let lens_words: Vec<&str> = lens.split_whitespace().collect();
     let skip = lens_words
         .iter()
@@ -343,7 +375,8 @@ impl MediaCtx {
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
-            let flex_grow = item.dimensions
+            let flex_grow = item
+                .dimensions
                 .map(|(w, h)| w as f64 / h as f64)
                 .unwrap_or(4.0 / 3.0);
             let exif = item.exif.as_ref();
@@ -357,7 +390,11 @@ impl MediaCtx {
                 .into_iter()
                 .flatten()
                 .collect();
-                if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join(" · "))
+                }
             });
             let exif_camera_lens = match (
                 exif.and_then(|e| e.camera.as_deref()),
@@ -369,7 +406,16 @@ impl MediaCtx {
                 (None, None) => None,
             };
             let exif_datetime = exif.and_then(|e| e.datetime.clone());
-            Self { url, thumb, medium, is_video: false, flex_grow, exif_tech, exif_camera_lens, exif_datetime }
+            Self {
+                url,
+                thumb,
+                medium,
+                is_video: false,
+                flex_grow,
+                exif_tech,
+                exif_camera_lens,
+                exif_datetime,
+            }
         }
     }
 
@@ -459,15 +505,27 @@ fn pack_into_rows(media: Vec<MediaCtx>) -> Vec<GalleryRowCtx> {
     for item in media {
         if item.is_video {
             if !current.is_empty() {
-                rows.push(GalleryRowCtx { media: current, is_last_unjustified: false, is_video_row: false });
+                rows.push(GalleryRowCtx {
+                    media: current,
+                    is_last_unjustified: false,
+                    is_video_row: false,
+                });
                 current = Vec::new();
                 ar_sum = 0.0;
             }
-            rows.push(GalleryRowCtx { media: vec![item], is_last_unjustified: false, is_video_row: true });
+            rows.push(GalleryRowCtx {
+                media: vec![item],
+                is_last_unjustified: false,
+                is_video_row: true,
+            });
         } else {
             let ar = item.flex_grow;
             if !current.is_empty() && ar_sum + ar > GALLERY_AR_THRESHOLD {
-                rows.push(GalleryRowCtx { media: current, is_last_unjustified: false, is_video_row: false });
+                rows.push(GalleryRowCtx {
+                    media: current,
+                    is_last_unjustified: false,
+                    is_video_row: false,
+                });
                 current = Vec::new();
                 ar_sum = 0.0;
             }
@@ -478,14 +536,16 @@ fn pack_into_rows(media: Vec<MediaCtx>) -> Vec<GalleryRowCtx> {
 
     if !current.is_empty() {
         let is_sparse = current.len() < 3 && ar_sum < GALLERY_AR_THRESHOLD * 0.5;
-        if is_sparse
-            && let Some(prev) = rows.last_mut().filter(|r| !r.is_video_row)
-        {
+        if is_sparse && let Some(prev) = rows.last_mut().filter(|r| !r.is_video_row) {
             prev.media.extend(current);
             prev.is_last_unjustified = true;
             return rows;
         }
-        rows.push(GalleryRowCtx { media: current, is_last_unjustified: true, is_video_row: false });
+        rows.push(GalleryRowCtx {
+            media: current,
+            is_last_unjustified: true,
+            is_video_row: false,
+        });
     }
 
     rows
@@ -584,8 +644,18 @@ mod tests {
                 name: "Day 1".into(),
                 body_html: None,
                 media: vec![
-                    MediaItem { path: day1_dir.join("a.jpg"), is_video: false, exif: None, dimensions: None },
-                    MediaItem { path: day1_dir.join("b.jpg"), is_video: false, exif: None, dimensions: None },
+                    MediaItem {
+                        path: day1_dir.join("a.jpg"),
+                        is_video: false,
+                        exif: None,
+                        dimensions: None,
+                    },
+                    MediaItem {
+                        path: day1_dir.join("b.jpg"),
+                        is_video: false,
+                        exif: None,
+                        dimensions: None,
+                    },
                 ],
             }],
             source_dir,
@@ -804,7 +874,13 @@ mod tests {
     #[test]
     fn render_feed_self_link_contains_token() {
         let site = Site { posts: vec![] };
-        let xml = render_feed(&site, &Viewer::public(), "https://example.com", "mytoken", "Glimpse");
+        let xml = render_feed(
+            &site,
+            &Viewer::public(),
+            "https://example.com",
+            "mytoken",
+            "Glimpse",
+        );
         assert!(xml.contains("mytoken.xml"), "self link should embed token");
     }
 }
