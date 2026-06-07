@@ -9,7 +9,8 @@ use axum::{
     Form, Router,
     body::Body,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -57,6 +58,27 @@ impl axum::extract::FromRef<AppState> for Key {
     }
 }
 
+// ── Middleware ────────────────────────────────────────────────────────────────
+
+const BLOCKED_COUNTRIES: &[&str] = &["CN", "RU"];
+
+async fn block_countries(req: Request<Body>, next: Next) -> Response {
+    let country = req
+        .headers()
+        .get("CF-IPCountry")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if BLOCKED_COUNTRIES.contains(&country) {
+        tracing::info!(country, "request blocked by country");
+        return (
+            StatusCode::FORBIDDEN,
+            Html("<h1>Access denied</h1><p>This service is not available in your region.</p>"),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 fn router(state: AppState, static_dir: PathBuf) -> Router {
@@ -71,6 +93,7 @@ fn router(state: AppState, static_dir: PathBuf) -> Router {
         .route("/admin/reload", post(admin_reload_handler))
         .nest_service("/static", ServeDir::new(static_dir))
         .fallback(not_found_handler)
+        .layer(middleware::from_fn(block_countries))
         .with_state(state)
 }
 
@@ -426,7 +449,13 @@ async fn media_handler(
     } else {
         "private, max-age=3600"
     };
-    serve_file_with_range(&source, content_type, cache_control, req_headers.get(header::RANGE)).await
+    serve_file_with_range(
+        &source,
+        content_type,
+        cache_control,
+        req_headers.get(header::RANGE),
+    )
+    .await
 }
 
 async fn admin_reload_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
@@ -474,6 +503,7 @@ struct LoginForm {
 async fn login_post_handler(
     State(state): State<AppState>,
     jar: PrivateCookieJar,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
     if state.users.verify(&form.username, &form.password).is_some() {
@@ -485,7 +515,11 @@ async fn login_post_handler(
         let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
         (updated_jar, Redirect::to(destination)).into_response()
     } else {
-        tracing::warn!(username = %form.username, "login failed: invalid credentials");
+        let country = headers
+            .get("CF-IPCountry")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown");
+        tracing::warn!(username = %form.username, country, "login failed: invalid credentials");
         let next = form.next.as_deref().filter(|p| is_safe_redirect(p));
         match state
             .theme
