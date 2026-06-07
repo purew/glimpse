@@ -19,6 +19,12 @@ cargo build
 # Run (requires GLIMPSE_SESSION_SECRET env var — see Runtime requirements below)
 cargo run
 
+# Run with explicit config/users paths
+cargo run -- --config /path/to/glimpse.toml --users /path/to/users.toml
+
+# Format
+cargo fmt
+
 # Lint (must be clean before committing)
 cargo clippy
 
@@ -30,6 +36,9 @@ cargo test <test_name>
 
 # Run tests for a specific module
 cargo test content::tests
+
+# Nix build (must pass before committing)
+nix build
 
 # Manage users.toml (add/remove/passwd/rotate-token/list)
 cargo run --bin manage-users -- --help
@@ -58,6 +67,8 @@ cargo run
 
 It also reads `glimpse.toml` (optional config), `users.toml` (missing file is non-fatal), and `posts/` at startup.
 
+Runtime tools `ffmpeg` and `exiftool` must be on `PATH` — used for video metadata and lens EXIF fallback respectively. In the Nix devshell they are provided automatically.
+
 `glimpse.toml` fields (all optional; these are the defaults):
 
 ```toml
@@ -70,9 +81,18 @@ preprocess_concurrency = 2
 
 Override the theme directory (default `themes/default`) with the `GLIMPSE_THEME_DIR` env var.
 
-## Linting
+## Pre-commit checklist
 
-Workspace lints in `Cargo.toml` set `warnings = "deny"` and `clippy::all = "deny"`. All warnings are hard errors — `cargo clippy` must be clean before committing.
+All four must pass before every commit:
+
+```bash
+cargo fmt --check
+cargo clippy
+cargo test
+nix build
+```
+
+Workspace lints in `Cargo.toml` set `warnings = "deny"` and `clippy::all = "deny"`. All warnings are hard errors.
 
 ## Architecture
 
@@ -105,7 +125,7 @@ posts/
         a.jpg
 ```
 
-Frontmatter fields: `title` (string), `date` (YYYY-MM-DD), `access` (list of group names; omit for draft), `cover` (optional relative path to cover image).
+Frontmatter fields: `title` (string), `date` (YYYY-MM-DD), `access` (list of group names; omit for draft), `cover` (optional — one path or a list of 1–3 paths for the cover image(s)).
 
 Media items include photos (jpg, png, webp, gif) and videos (mp4, mov, webm). Videos are only included if their filename contains `web-optimized`. Each `MediaItem` carries an `is_video` flag used by templates to render `<video>` vs `<img>` elements.
 
@@ -139,6 +159,7 @@ feed_token_hash = "<sha256 hex from generate-feed-token binary>"  # optional
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/` | Post index (visible to current viewer) |
+| GET | `/groups/{name}` | Index filtered to a single access group |
 | GET | `/posts/{slug}` | Post detail page |
 | GET | `/media/{post}/{*path}` | Photo serving; access-gated; `?size=thumb` or `?size=medium` for derivatives |
 | GET | `/feed/{token}` | Personalised Atom feed; token identifies the user |
