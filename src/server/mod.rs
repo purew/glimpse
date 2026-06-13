@@ -240,12 +240,12 @@ fn viewer_from_jar(jar: &PrivateCookieJar, users: &Users) -> Viewer {
     }
 }
 
-fn session_cookie(name: &'static str, value: String) -> Cookie<'static> {
+fn session_cookie(name: &'static str, value: String, max_age_days: u32) -> Cookie<'static> {
     Cookie::build((name, value))
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
-        .max_age(Duration::days(90))
+        .max_age(Duration::days(i64::from(max_age_days)))
         .build()
 }
 
@@ -512,7 +512,7 @@ async fn login_post_handler(
             .as_deref()
             .filter(|p| is_safe_redirect(p))
             .unwrap_or("/");
-        let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username));
+        let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username, state.cfg.session_max_age_days));
         (updated_jar, Redirect::to(destination)).into_response()
     } else {
         let country = headers

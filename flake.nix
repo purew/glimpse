@@ -79,6 +79,7 @@
             posts_dir = cfg.postsDir;
             cache_dir = cfg.cacheDir;
             preprocess_concurrency = cfg.preprocessConcurrency;
+            session_max_age_days = cfg.sessionMaxAgeDays;
           };
         in
         {
@@ -143,6 +144,12 @@
               type = lib.types.ints.positive;
               default = 2;
               description = "Maximum number of image derivatives generated concurrently during a reload.";
+            };
+
+            sessionMaxAgeDays = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 90;
+              description = "How long session cookies remain valid, in days.";
             };
 
             logLevel = lib.mkOption {

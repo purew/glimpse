@@ -17,6 +17,8 @@ pub(crate) struct Config {
     pub(crate) cache_dir: PathBuf,
     /// Number of posts to preprocess concurrently at startup and on reload.
     pub(crate) preprocess_concurrency: usize,
+    /// How long session cookies remain valid, in days.
+    pub(crate) session_max_age_days: u32,
 }
 
 impl Default for Config {
@@ -27,6 +29,7 @@ impl Default for Config {
             posts_dir: PathBuf::from("posts"),
             cache_dir: PathBuf::from("cache"),
             preprocess_concurrency: 2,
+            session_max_age_days: 90,
         }
     }
 }
