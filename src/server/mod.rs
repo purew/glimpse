@@ -17,7 +17,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar, SameSite};
 use serde::Deserialize;
 use time::Duration;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{error, info};
 
 use anyhow::Context;
@@ -391,7 +391,7 @@ async fn media_handler(
     jar: PrivateCookieJar,
     Path((post_slug, file_path)): Path<(String, String)>,
     Query(params): Query<MediaParams>,
-    req_headers: HeaderMap,
+    req: Request<Body>,
 ) -> Response {
     if !is_safe_subpath(&file_path) {
         return StatusCode::NOT_FOUND.into_response();
@@ -443,19 +443,12 @@ async fn media_handler(
         };
     }
 
-    let content_type = media_content_type(&source);
     let cache_control = if is_public {
         "public, max-age=3600"
     } else {
         "private, max-age=3600"
     };
-    serve_file_with_range(
-        &source,
-        content_type,
-        cache_control,
-        req_headers.get(header::RANGE),
-    )
-    .await
+    serve_file(&source, cache_control, req).await
 }
 
 async fn admin_reload_handler(State(state): State<AppState>, jar: PrivateCookieJar) -> Response {
@@ -512,7 +505,11 @@ async fn login_post_handler(
             .as_deref()
             .filter(|p| is_safe_redirect(p))
             .unwrap_or("/");
-        let updated_jar = jar.add(session_cookie(SESSION_USER_KEY, form.username, state.cfg.session_max_age_days));
+        let updated_jar = jar.add(session_cookie(
+            SESSION_USER_KEY,
+            form.username,
+            state.cfg.session_max_age_days,
+        ));
         (updated_jar, Redirect::to(destination)).into_response()
     } else {
         let country = headers
@@ -541,92 +538,35 @@ async fn logout_handler(jar: PrivateCookieJar) -> Response {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async fn serve_file_with_range(
+/// Serves `path`, delegating to `tower_http`'s `ServeFile` so that streaming,
+/// `Range` requests, `Last-Modified` revalidation, and `HEAD` are all handled
+/// correctly. This matters most for video: the body is streamed in chunks rather
+/// than buffered, and seeking works because byte ranges — including suffix ranges
+/// like `bytes=-500` and unsatisfiable ones (416) — are answered per RFC 9110.
+///
+/// The `Content-Type` is guessed from the file extension. `cache_control` is
+/// applied to cacheable responses only, so a 404 is never cached.
+async fn serve_file(
     path: &std::path::Path,
-    content_type: &'static str,
     cache_control: &'static str,
-    range_header: Option<&HeaderValue>,
+    req: Request<Body>,
 ) -> Response {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-    let metadata = match tokio::fs::metadata(path).await {
-        Ok(m) => m,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-    let total = metadata.len();
-
-    if total == 0 {
-        return axum::http::Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header(header::CACHE_CONTROL, cache_control)
-            .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CONTENT_LENGTH, 0u64)
-            .body(Body::empty())
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    match ServeFile::new(path).try_call(req).await {
+        Ok(resp) => {
+            let mut resp = resp.map(Body::new);
+            if resp.status().is_success() || resp.status() == StatusCode::NOT_MODIFIED {
+                resp.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static(cache_control),
+                );
+            }
+            resp
+        }
+        Err(e) => {
+            error!(path = %path.display(), error = %e, "failed to serve media file");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
-
-    let range = range_header
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| parse_byte_range(s, total));
-
-    let (start, end, status) = match range {
-        Some((s, e)) => (s, e, StatusCode::PARTIAL_CONTENT),
-        None => (0, total - 1, StatusCode::OK),
-    };
-
-    let chunk_len = end - start + 1;
-
-    let mut file = match tokio::fs::File::open(path).await {
-        Ok(f) => f,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-
-    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-
-    let mut buf = Vec::with_capacity(chunk_len as usize);
-    if file.take(chunk_len).read_to_end(&mut buf).await.is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-
-    let actual_len = buf.len() as u64;
-    let mut builder = axum::http::Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, cache_control)
-        .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CONTENT_LENGTH, actual_len);
-
-    if status == StatusCode::PARTIAL_CONTENT {
-        let actual_end = start + actual_len.saturating_sub(1);
-        builder = builder.header(
-            header::CONTENT_RANGE,
-            format!("bytes {start}-{actual_end}/{total}"),
-        );
-    }
-
-    builder
-        .body(Body::from(buf))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-/// Parses a `bytes=start-end` or `bytes=start-` range header value.
-/// Clamps the end to `total - 1` and returns `None` for invalid or unsatisfiable ranges.
-fn parse_byte_range(range: &str, total: u64) -> Option<(u64, u64)> {
-    let s = range.strip_prefix("bytes=")?;
-    let (start_str, end_str) = s.split_once('-')?;
-    let start: u64 = start_str.parse().ok()?;
-    let end: u64 = if end_str.is_empty() {
-        total - 1
-    } else {
-        end_str.parse::<u64>().ok()?.min(total - 1)
-    };
-    if start > end {
-        return None;
-    }
-    Some((start, end))
 }
 
 /// Returns `true` only when every component of `path` is a plain file/dir name —
@@ -635,24 +575,6 @@ fn is_safe_subpath(path: &str) -> bool {
     std::path::Path::new(path)
         .components()
         .all(|c| matches!(c, std::path::Component::Normal(_)))
-}
-
-fn media_content_type(path: &std::path::Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_lowercase)
-        .as_deref()
-    {
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("png") => "image/png",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("mp4") => "video/mp4",
-        Some("mov") => "video/quicktime",
-        Some("webm") => "video/webm",
-        _ => "application/octet-stream",
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -950,6 +872,160 @@ mod tests {
             resp.headers().get(header::CACHE_CONTROL).unwrap(),
             "public, max-age=3600"
         );
+    }
+
+    // ── Media — Range requests (video streaming) ──────────────────────────────
+
+    const CLIP: &str = "abcdefghijklmnopqrstuvwxyz";
+
+    /// Writes a stand-in video file and returns a router serving it from `trip`.
+    fn video_app(tmp: &TempDir, name: &str) -> Router {
+        std::fs::write(tmp.path().join(name), CLIP).unwrap();
+        let post = make_post_with_photo("trip", tmp.path());
+        build_router(test_state(vec![post], tmp.path().join("cache")))
+    }
+
+    fn range_get(uri: &str, range: &str) -> Request<axum::body::Body> {
+        Request::builder()
+            .uri(uri)
+            .header(header::RANGE, range)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn media_video_advertises_range_support() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        let resp = app.oneshot(get("/media/trip/clip.mp4")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/mp4"
+        );
+        // A validator is required for `If-Range`, so seeks resume from cache.
+        assert!(resp.headers().contains_key(header::LAST_MODIFIED));
+        assert_eq!(body_string(resp).await, CLIP);
+    }
+
+    #[tokio::test]
+    async fn media_video_serves_partial_content_for_range() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        let resp = app
+            .oneshot(range_get("/media/trip/clip.mp4", "bytes=2-5"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 2-5/26"
+        );
+        assert_eq!(resp.headers().get(header::CONTENT_LENGTH).unwrap(), "4");
+        assert_eq!(body_string(resp).await, "cdef");
+    }
+
+    #[tokio::test]
+    async fn media_video_serves_open_ended_range() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        // What Chrome and Safari send as their first video request.
+        let resp = app
+            .oneshot(range_get("/media/trip/clip.mp4", "bytes=0-"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 0-25/26"
+        );
+        assert_eq!(body_string(resp).await, CLIP);
+    }
+
+    #[tokio::test]
+    async fn media_video_serves_suffix_range() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        // Players ask for the tail to find a trailing `moov` atom.
+        let resp = app
+            .oneshot(range_get("/media/trip/clip.mp4", "bytes=-4"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 22-25/26"
+        );
+        assert_eq!(body_string(resp).await, "wxyz");
+    }
+
+    #[tokio::test]
+    async fn media_video_returns_416_for_unsatisfiable_range() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        let resp = app
+            .oneshot(range_get("/media/trip/clip.mp4", "bytes=9999-"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes */26"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_video_head_reports_length_without_body() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        let req = Request::builder()
+            .method("HEAD")
+            .uri("/media/trip/clip.mp4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(header::CONTENT_LENGTH).unwrap(), "26");
+        assert_eq!(resp.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert!(body_string(resp).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn media_video_content_type_follows_extension() {
+        for (name, expected) in [
+            ("clip.mp4", "video/mp4"),
+            ("clip.mov", "video/quicktime"),
+            ("clip.webm", "video/webm"),
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let app = video_app(&tmp, name);
+            let resp = app
+                .oneshot(get(&format!("/media/trip/{name}")))
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.headers().get(header::CONTENT_TYPE).unwrap(),
+                expected,
+                "wrong content type for {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn media_does_not_cache_404_for_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let app = video_app(&tmp, "clip.mp4");
+
+        let resp = app.oneshot(get("/media/trip/gone.mp4")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert!(!resp.headers().contains_key(header::CACHE_CONTROL));
     }
 
     #[tokio::test]

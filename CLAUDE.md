@@ -177,6 +177,8 @@ The feed route accepts an optional `.xml` suffix (`/feed/{token}.xml`) for compa
 
 Photos are served at `/media/{post-slug}/{relative-path-under-photos/}`. `?size=thumb` returns a max-400 px JPEG; `?size=medium` returns max-1200 px. Originals: `Cache-Control: max-age=3600`; derivatives: `Cache-Control: immutable`.
 
+Originals (including videos) are served by `tower-http`'s `ServeFile`, which streams the body in chunks and handles `Range` requests, `Last-Modified` revalidation, and `HEAD`. Do not hand-roll range handling here — video seeking depends on suffix ranges (`bytes=-N`) and 416 responses being correct. Derivatives are small and immutable, so they are still read into memory and returned whole. `Cache-Control` is applied only to cacheable responses, so a 404 is never cached.
+
 ### Templates
 
 MiniJinja templates in `themes/default/templates/`: `base.html`, `index.html`, `post.html`, `login.html`. Theme CSS at `themes/default/static/style.css`.
