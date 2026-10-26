@@ -347,8 +347,14 @@ struct MediaCtx {
     /// `?size=medium` derivative URL; empty for videos.
     medium: String,
     is_video: bool,
-    /// Aspect ratio (width/height) used for CSS `flex-grow` and `aspect-ratio`.
-    /// Defaults to 4/3 when dimensions are unknown; 1.0 for videos (unused).
+    /// MIME type for a video's `<source type=...>`, letting the browser skip a
+    /// format it cannot play. `None` for photos and unrecognised extensions.
+    mime: Option<&'static str>,
+    /// Aspect ratio (width/height), or `None` when the dimensions are unknown.
+    /// Reserves the right-shaped box so media does not shift the page on load.
+    aspect_ratio: Option<f64>,
+    /// `aspect_ratio` with a 4/3 fallback, for CSS `flex-grow` and `aspect-ratio`
+    /// on photos — row packing needs a number even when dimensions are missing.
     flex_grow: f64,
     /// Focal length · aperture · shutter · ISO, e.g. `"50mm · f/2.8 · 1/250s · ISO 400"`.
     exif_tech: Option<String>,
@@ -358,16 +364,35 @@ struct MediaCtx {
     exif_datetime: Option<String>,
 }
 
+/// MIME type for a video file, by extension. Mirrors the set of video formats
+/// `content::is_video` ingests.
+fn video_mime(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        Some("mp4") => Some("video/mp4"),
+        Some("mov") => Some("video/quicktime"),
+        Some("webm") => Some("video/webm"),
+        _ => None,
+    }
+}
+
 impl MediaCtx {
     fn from_item(slug: &str, source_dir: &Path, item: &MediaItem) -> Self {
         let url = media_url(slug, source_dir, &item.path);
+        let aspect_ratio = item.dimensions.map(|(w, h)| w as f64 / h as f64);
         if item.is_video {
             Self {
                 url,
                 thumb: String::new(),
                 medium: String::new(),
                 is_video: true,
-                flex_grow: 1.0,
+                mime: video_mime(&item.path),
+                aspect_ratio,
+                flex_grow: aspect_ratio.unwrap_or(4.0 / 3.0),
                 exif_tech: None,
                 exif_camera_lens: None,
                 exif_datetime: None,
@@ -375,10 +400,7 @@ impl MediaCtx {
         } else {
             let thumb = format!("{url}?size=thumb");
             let medium = format!("{url}?size=medium");
-            let flex_grow = item
-                .dimensions
-                .map(|(w, h)| w as f64 / h as f64)
-                .unwrap_or(4.0 / 3.0);
+            let flex_grow = aspect_ratio.unwrap_or(4.0 / 3.0);
             let exif = item.exif.as_ref();
             let exif_tech = exif.and_then(|e| {
                 let parts: Vec<&str> = [
@@ -411,6 +433,8 @@ impl MediaCtx {
                 thumb,
                 medium,
                 is_video: false,
+                mime: None,
+                aspect_ratio,
                 flex_grow,
                 exif_tech,
                 exif_camera_lens,
@@ -428,6 +452,8 @@ impl MediaCtx {
             thumb,
             medium,
             is_video: false,
+            mime: None,
+            aspect_ratio: None,
             flex_grow: 4.0 / 3.0,
             exif_tech: None,
             exif_camera_lens: None,
@@ -769,6 +795,102 @@ mod tests {
             "photo URLs should start with /media/slug/"
         );
         assert!(decoded.contains("a.jpg"));
+    }
+
+    /// Post with one video, optionally with known dimensions.
+    fn make_post_with_video(slug: &str, name: &str, dimensions: Option<(u32, u32)>) -> Post {
+        let source_dir = PathBuf::from("/posts").join(slug);
+        Post {
+            slug: slug.into(),
+            title: "With Video".into(),
+            date: "2025-02-01".into(),
+            access: vec!["family".into()],
+            covers: vec![],
+            body_html: String::new(),
+            photo_groups: vec![PhotoGroup {
+                name: String::new(),
+                body_html: None,
+                media: vec![MediaItem {
+                    path: source_dir.join(name),
+                    is_video: true,
+                    exif: None,
+                    dimensions,
+                }],
+            }],
+            source_dir,
+        }
+    }
+
+    #[test]
+    fn render_post_video_plays_inline_with_typed_source() {
+        let theme = load_theme();
+        let post = make_post_with_video("trip", "clip-web-optimized.mp4", Some((1920, 1080)));
+
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
+
+        // Without playsinline, iOS Safari forces every video fullscreen.
+        assert!(html.contains("playsinline"), "video must play inline");
+        assert!(html.contains("preload=\"metadata\""));
+        assert!(
+            html.contains("type=\"video&#x2f;mp4\"") || html.contains("type=\"video/mp4\""),
+            "source should declare its MIME type: {html}"
+        );
+    }
+
+    #[test]
+    fn render_post_video_reserves_aspect_ratio() {
+        let theme = load_theme();
+        let post = make_post_with_video("trip", "clip-web-optimized.mp4", Some((1920, 1080)));
+
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
+
+        assert!(
+            html.contains("aspect-ratio: 1.777"),
+            "16:9 video should reserve a 16:9 box: {html}"
+        );
+    }
+
+    #[test]
+    fn render_post_portrait_video_reserves_portrait_box() {
+        let theme = load_theme();
+        let post = make_post_with_video("trip", "clip-web-optimized.mp4", Some((1080, 1920)));
+
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
+
+        assert!(
+            html.contains("aspect-ratio: 0.5625"),
+            "portrait video should reserve a tall box: {html}"
+        );
+    }
+
+    #[test]
+    fn render_post_video_omits_aspect_ratio_when_dimensions_unknown() {
+        let theme = load_theme();
+        let post = make_post_with_video("trip", "clip-web-optimized.mp4", None);
+
+        let html = theme
+            .render_post(&post, &Viewer::with_groups(["family"]))
+            .unwrap();
+
+        // Guessing would letterbox; let the player size itself instead.
+        assert!(
+            !html.contains("aspect-ratio"),
+            "no dimensions means no forced box: {html}"
+        );
+    }
+
+    #[test]
+    fn video_mime_covers_ingested_formats() {
+        assert_eq!(video_mime(Path::new("a.mp4")), Some("video/mp4"));
+        assert_eq!(video_mime(Path::new("a.MOV")), Some("video/quicktime"));
+        assert_eq!(video_mime(Path::new("a.webm")), Some("video/webm"));
+        assert_eq!(video_mime(Path::new("a.jpg")), None);
     }
 
     #[test]

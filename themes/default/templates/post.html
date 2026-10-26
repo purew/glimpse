@@ -34,8 +34,9 @@
         {% for item in row.media %}
         {% if item.is_video %}
         <div class="gallery-item gallery-item--video">
-          <video controls preload="metadata">
-            <source src="{{ item.url }}">
+          <video controls playsinline preload="metadata"
+                 {% if item.aspect_ratio %}style="aspect-ratio: {{ item.aspect_ratio }}"{% endif %}>
+            <source src="{{ item.url }}"{% if item.mime %} type="{{ item.mime }}"{% endif %}>
           </video>
         </div>
         {% else %}

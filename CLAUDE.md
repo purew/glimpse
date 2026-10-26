@@ -67,7 +67,7 @@ cargo run
 
 It also reads `glimpse.toml` (optional config), `users.toml` (missing file is non-fatal), and `posts/` at startup.
 
-Runtime tools `ffmpeg` and `exiftool` must be on `PATH` — used for video metadata and lens EXIF fallback respectively. In the Nix devshell they are provided automatically.
+Runtime tools `ffprobe` (shipped in the `ffmpeg` package) and `exiftool` must be on `PATH` — used for video dimensions and lens EXIF fallback respectively. Both are optional: a missing tool just means that metadata is absent. In the Nix devshell they are provided automatically.
 
 `glimpse.toml` fields (all optional; these are the defaults):
 
@@ -128,6 +128,8 @@ posts/
 Frontmatter fields: `title` (string), `date` (YYYY-MM-DD), `access` (list of group names; omit for draft), `cover` (optional — one path or a list of 1–3 paths for the cover image(s)).
 
 Media items include photos (jpg, png, webp, gif) and videos (mp4, mov, webm). Videos are only included if their filename contains `web-optimized`. Each `MediaItem` carries an `is_video` flag used by templates to render `<video>` vs `<img>` elements.
+
+`MediaItem::dimensions` is read from the image header for photos and from `ffprobe` for videos (via `video_dimensions`, which swaps the axes for ±90° rotation side data so portrait phone videos are not boxed as landscape). Results are cached under `cache/exif/`, keyed by path + mtime, alongside the `exiftool` lens lookups. Dimensions drive the `aspect-ratio` the templates emit, which is what keeps media from shifting the page as it loads — videos are rendered with `controls playsinline preload="metadata"`.
 
 Folder name is the slug source: `"2025-03-18 Hawaii"` → `"2025-03-18-hawaii"`.
 

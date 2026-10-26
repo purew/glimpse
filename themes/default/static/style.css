@@ -431,6 +431,10 @@ main {
   width: 100%;
   display: block;
   border-radius: 4px;
+  /* Fallback box shape until metadata loads, for videos whose dimensions
+     ffprobe could not read (the template sets a real ratio when it can). */
+  aspect-ratio: 16 / 9;
+  background: #000;
 }
 
 /* ── Login page ───────────────────────────────────────────────────────────── */

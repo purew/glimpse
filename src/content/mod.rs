@@ -64,7 +64,8 @@ pub(crate) struct MediaItem {
     pub(crate) is_video: bool,
     /// `None` for videos or photos without readable EXIF.
     pub(crate) exif: Option<ExifData>,
-    /// Pixel dimensions. `None` for videos or unreadable images.
+    /// Display dimensions: from the image header for photos, from `ffprobe`
+    /// (rotation applied) for videos. `None` when unreadable.
     pub(crate) dimensions: Option<(u32, u32)>,
 }
 
@@ -372,7 +373,10 @@ fn format_exif_datetime(raw: &str) -> String {
     }
 }
 
-fn exiftool_lens_cache_path(path: &Path, cache_dir: &Path) -> Option<PathBuf> {
+/// Path for a cached metadata lookup, keyed by source path + mtime so the entry
+/// is invalidated whenever the file changes. `kind` distinguishes the lookups
+/// (`"lens"`, `"dims"`) that share the cache directory.
+fn metadata_cache_path(path: &Path, cache_dir: &Path, kind: &str) -> Option<PathBuf> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
     let mut h = DefaultHasher::new();
@@ -385,11 +389,11 @@ fn exiftool_lens_cache_path(path: &Path, cache_dir: &Path) -> Option<PathBuf> {
     let key = h.finish();
     let exif_cache = cache_dir.join("exif");
     std::fs::create_dir_all(&exif_cache).ok()?;
-    Some(exif_cache.join(format!("{key:016x}-lens.txt")))
+    Some(exif_cache.join(format!("{key:016x}-{kind}.txt")))
 }
 
 fn exiftool_lens(path: &Path, cache_dir: &Path) -> Option<String> {
-    let cache_path = exiftool_lens_cache_path(path, cache_dir)?;
+    let cache_path = metadata_cache_path(path, cache_dir, "lens")?;
 
     if cache_path.exists() {
         let cached = std::fs::read_to_string(&cache_path).ok()?;
@@ -412,6 +416,84 @@ fn exiftool_lens(path: &Path, cache_dir: &Path) -> Option<String> {
 
     let _ = std::fs::write(&cache_path, lens.as_deref().unwrap_or(""));
     lens
+}
+
+/// Parses `ffprobe`'s `key=value` output into display dimensions.
+///
+/// A rotation of ±90° means the coded width/height are the opposite of what the
+/// player will show, so the axes are swapped — without this, portrait phone
+/// videos would be boxed as landscape.
+fn parse_ffprobe_dimensions(out: &str) -> Option<(u32, u32)> {
+    let mut width = None;
+    let mut height = None;
+    let mut rotation = 0.0_f64;
+
+    for line in out.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "width" => width = value.parse().ok(),
+            "height" => height = value.parse().ok(),
+            "rotation" => rotation = value.parse().unwrap_or(0.0),
+            _ => {}
+        }
+    }
+
+    let (w, h) = (width?, height?);
+    if (rotation.abs().round() as i64) % 180 == 90 {
+        Some((h, w))
+    } else {
+        Some((w, h))
+    }
+}
+
+/// Reads a video's display dimensions with `ffprobe`, so the page can reserve a
+/// correctly shaped box and avoid layout shift once the player loads metadata.
+///
+/// Results (including failures, cached as an empty file) are cached under
+/// `cache/exif/` — spawning `ffprobe` per video on every rebuild is slow.
+/// Returns `None` if `ffprobe` is missing or the file has no video stream.
+fn video_dimensions(path: &Path, cache_dir: &Path) -> Option<(u32, u32)> {
+    let cache_path = metadata_cache_path(path, cache_dir, "dims")?;
+
+    if let Ok(cached) = std::fs::read_to_string(&cache_path) {
+        let (w, h) = cached.trim().split_once('x')?;
+        return Some((w.parse().ok()?, h.parse().ok()?));
+    }
+
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height:stream_side_data=rotation",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
+        .arg(path)
+        .output()
+        .ok()?;
+
+    let dims = if output.status.success() {
+        std::str::from_utf8(&output.stdout)
+            .ok()
+            .and_then(parse_ffprobe_dimensions)
+    } else {
+        None
+    };
+
+    if dims.is_none() {
+        info!(path = %path.display(), "could not read video dimensions via ffprobe");
+    }
+    let _ = std::fs::write(
+        &cache_path,
+        dims.map(|(w, h)| format!("{w}x{h}")).unwrap_or_default(),
+    );
+    dims
 }
 
 fn read_exif(path: &Path, cache_dir: &Path) -> Option<ExifData> {
@@ -519,7 +601,11 @@ fn collect_media(dir: &Path, cache_dir: &Path) -> Result<Vec<MediaItem>, Content
             } else {
                 read_exif(&p, cache_dir)
             };
-            let dimensions = if is_video { None } else { read_dimensions(&p) };
+            let dimensions = if is_video {
+                video_dimensions(&p, cache_dir)
+            } else {
+                read_dimensions(&p)
+            };
             MediaItem {
                 path: p,
                 is_video,
@@ -566,11 +652,12 @@ fn discover_photo_groups(
             info!(path = %path.display(), "skipping nsfw media file");
         } else if is_video(&path) && is_web_optimized(&path) {
             info!(path = %path.display(), "ingesting web-optimized video");
+            let dimensions = video_dimensions(&path, cache_dir);
             flat_media.push(MediaItem {
                 path,
                 is_video: true,
                 exif: None,
-                dimensions: None,
+                dimensions,
             });
         } else if is_photo(&path) {
             let exif = read_exif(&path, cache_dir);
@@ -972,6 +1059,46 @@ mod tests {
             .unwrap();
         assert_eq!(day1.media.len(), 1);
         assert!(day1.media[0].path.file_name().unwrap() == "safe2.jpg");
+    }
+
+    #[test]
+    fn ffprobe_dimensions_parsed_from_key_value_output() {
+        assert_eq!(
+            parse_ffprobe_dimensions("width=1920\nheight=1080\n"),
+            Some((1920, 1080))
+        );
+    }
+
+    #[test]
+    fn ffprobe_dimensions_swap_axes_for_quarter_turn_rotation() {
+        // A portrait phone video: landscape coded dimensions plus a rotation.
+        assert_eq!(
+            parse_ffprobe_dimensions("width=1920\nheight=1080\nrotation=-90\n"),
+            Some((1080, 1920))
+        );
+        assert_eq!(
+            parse_ffprobe_dimensions("width=1920\nheight=1080\nrotation=90\n"),
+            Some((1080, 1920))
+        );
+        assert_eq!(
+            parse_ffprobe_dimensions("width=1920\nheight=1080\nrotation=270\n"),
+            Some((1080, 1920))
+        );
+    }
+
+    #[test]
+    fn ffprobe_dimensions_keep_axes_for_half_turn_rotation() {
+        assert_eq!(
+            parse_ffprobe_dimensions("width=1920\nheight=1080\nrotation=180\n"),
+            Some((1920, 1080))
+        );
+    }
+
+    #[test]
+    fn ffprobe_dimensions_none_when_output_incomplete() {
+        assert_eq!(parse_ffprobe_dimensions(""), None);
+        assert_eq!(parse_ffprobe_dimensions("width=1920\n"), None);
+        assert_eq!(parse_ffprobe_dimensions("[STREAM]\n[/STREAM]\n"), None);
     }
 
     #[test]
